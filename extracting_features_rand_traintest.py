@@ -7,7 +7,7 @@ Created on Tue Nov 13 14:40:40 2018
 """
 
 import os, sys
-os.chdir('/Users/semvijverberg/surfdrive/Scripts/Circulation-Regimes')
+os.chdir('/Users/semvijverberg/surfdrive/Scripts/Extracting_precursor/')
 script_dir = os.getcwd()
 if sys.version[:1] == '3':
     from importlib import reload as rel
@@ -204,50 +204,61 @@ def find_precursor(RV_ts, Prec_reg, ex):
         crosscorr_Sem = func_mcK.cross_correlation_patterns(var_test_reg, 
                                                             ds_Sem['pattern'].sel(lag=lag))
         
-#        plt.plot(crosscorr_mcK)
-#        plt.plot(crosscorr_Sem)
-#        
-           
-        # check detection of precursor:
-        Prec_threshold_mcK = ds_mcK['perc'].sel(percentile=60 /10).values[0]
-        Prec_threshold_Sem = ds_Sem['perc'].sel(percentile=60 /10).values[0]
         
-        # =============================================================================
-        # Determine events in time series
-        # =============================================================================
-        # check if there are any detections
-        Prec_det_mcK = (func_mcK.Ev_timeseries(crosscorr_mcK, Prec_threshold_mcK).size > ex['min_detection'])
-        Prec_det_Sem = (func_mcK.Ev_timeseries(crosscorr_Sem, Prec_threshold_Sem).size > ex['min_detection'])
+        if ex['method'] == 'iter':
+            ex['test_ts_mcK'][idx] = np.append(ex['test_ts_mcK'], crosscorr_mcK.values)
+            ex['test_ts_Sem'][idx] = np.append(ex['test_ts_Sem'], crosscorr_Sem.values)
+            print(len(ex['test_ts_Sem']))
         
-        # select test event predictand series
-        RV_ts_test = test['RV']
-#        # plot the detections
-#        func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, RV_ts_test, Prec_threshold_Sem, 
-#                                        Prec_threshold_mcK, ex['hotdaythres'], test_years[0])
-
-
-        if Prec_det_mcK == True:
-            n_boot = 1
-            ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, RV_ts_test,
-                                  ex['hotdaythres'], lag, n_boot, ds_mcK['perc'])
-
-
-        else:
-            print('Not enough predictions detected, neglecting this predictions')
-            ROC_mcK[idx] = ROC_boot = 0.5
-
-
-        
-        if Prec_det_Sem == True:
-            n_boot = 0
-            ROC_Sem[idx] = ROC_score(crosscorr_Sem, RV_ts_test,
-                                  ex['hotdaythres'], lag, n_boot, ds_Sem['perc'])[0]
-#            ROC_std = 2 * np.std([ROC_boot_Sem, ROC_boot_mcK])
+            if  ex['n'] == ex['n_years']:
+                n_boot = 1
+                ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], RV_ts,
+                                      ex['hotdaythres'], lag, n_boot, 'default')
+                ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
+                                      ex['hotdaythres'], lag, 0, 'default')[0]
+                
+        elif ['method'] == 'random':        
+                               
+            # check detection of precursor:
+            Prec_threshold_mcK = ds_mcK['perc'].sel(percentile=60 /10).values[0]
+            Prec_threshold_Sem = ds_Sem['perc'].sel(percentile=60 /10).values[0]
             
-#                Sem_ROCS.append(commun_comp.sel(lag=lag))
-        else:
-            print('Not enough predictions detected, neglecting this predictions')
-            ROC_Sem = ROC_boot = 0.5
+            # =============================================================================
+            # Determine events in time series
+            # =============================================================================
+            # check if there are any detections
+            Prec_det_mcK = (func_mcK.Ev_timeseries(crosscorr_mcK, 
+                                           Prec_threshold_mcK).size > ex['min_detection'])
+            Prec_det_Sem = (func_mcK.Ev_timeseries(crosscorr_Sem, 
+                                           Prec_threshold_Sem).size > ex['min_detection'])
+            
+    #        # plot the detections
+    #        func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, RV_ts_test, Prec_threshold_Sem, 
+    #                                        Prec_threshold_mcK, ex['hotdaythres'], test_years[0])
+    
+    
+            if Prec_det_mcK == True:
+                n_boot = 1
+                ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
+                                      ex['hotdaythres'], lag, n_boot, ds_mcK['perc'])
+    
+    
+            else:
+                print('Not enough predictions detected, neglecting this predictions')
+                ROC_mcK[idx] = ROC_boot = 0.5
+    
+    
+            
+            if Prec_det_Sem == True:
+                n_boot = 0
+                ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
+                                      ex['hotdaythres'], lag, n_boot, ds_Sem['perc'])[0]
+    #            ROC_std = 2 * np.std([ROC_boot_Sem, ROC_boot_mcK])
+                
+    #                Sem_ROCS.append(commun_comp.sel(lag=lag))
+            else:
+                print('Not enough predictions detected, neglecting this predictions')
+                ROC_Sem = ROC_boot = 0.5
                                   
             
         print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
@@ -293,16 +304,20 @@ def find_precursor(RV_ts, Prec_reg, ex):
 
 #                mcK_ROCS.append(ds_mcK['pattern'].sel(lag=lag))
         
-    return score_per_run
+    return score_per_run, ex
             
 #%% Run until ROC has converged
     
-leave_n_out = False
-ROC_leave_n_out = False
+leave_n_out = True ; ex['method'] = 'iter'
 
-ROC_boot = []
-mcK_ROCS = []
-Sem_ROCS = []
+max_conv = len(set(RV_ts.time.dt.year.values))
+ROC_leave_n_out = False
+if leave_n_out == True and ex['method'] == 'iter':
+    ex['test_ts_mcK'] = np.zeros( (len(ex['lags']),1) )
+    ex['test_ts_Sem'] = np.zeros(len(ex['lags']))
+
+
+score_per_run = []
 
 ex['lags'] = [30, 40]  
 ex['min_detection'] = 5
@@ -310,18 +325,16 @@ ex['leave_n_years_out'] = 5
 ex['hotdaythres'] = hotdaythreshold
 ex['n_strongest'] = 15 
 ex['n_std'] = 1.5   
-
+ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = 10
 ex['toler'] = 0.010
 Convergence = False ; Conv_mcK = False ; Conv_Sem = False
-max_conv = 75
-score_per_run = []
-n = 0
+
+ex['n'] = 0
 while Convergence == False:
-    n += 1
     n_lags = len(ex['lags'])
     # do single run
-    score_per_run = find_precursor(RV_ts, Prec_reg, ex)
+    score_per_run, ex = find_precursor(RV_ts, Prec_reg, ex)
     events_per_year = [score_per_run[i][1] for i in range(len(score_per_run))]
     l_ds_mcK       = [score_per_run[i][2] for i in range(len(score_per_run))]
     l_ds_Sem       = [score_per_run[i][3] for i in range(len(score_per_run))]
@@ -352,9 +365,12 @@ while Convergence == False:
             means.append( mean )
         return diff_last_n_means, ROC_at_lags, diff_means, means
     
+    
+    ex['n'] += 1
+    
     # Check convergence of ROC score mcKinnon
-    if n >= ex['n_conv']:
-        diff_last_n_means, mean_at_lags, diff_means, means = check_last_n_means(l_ds_mcK, n, ex)
+    if ex['n'] >= ex['n_conv']:
+        diff_last_n_means, mean_at_lags, diff_means, means = check_last_n_means(l_ds_mcK, ex['n'], ex)
         scores_mcK = np.round(np.mean(mean_at_lags,axis=1),2)
         std_mcK    = np.round(np.std(mean_at_lags,axis=1),2)
         print('\nMean score of mcK {} ± {} 2*std'.format(scores_mcK,std_mcK))
@@ -378,9 +394,11 @@ while Convergence == False:
             Conv_mcK = True
             print('\nConvergence mcK is True')
     
+    
+    
     # Check convergence of ROC score Sem
-    if n >= ex['n_conv']:
-        diff_last_n_means, mean_at_lags, diff_means, means = check_last_n_means(l_ds_Sem, n, ex)
+    if ex['n'] >= ex['n_conv']:
+        diff_last_n_means, mean_at_lags, diff_means, means = check_last_n_means(l_ds_Sem, ex['n'], ex)
         scores_Sem = np.round(np.mean(mean_at_lags,axis=1),2)
         std_Sem    = np.round(np.std(mean_at_lags,axis=1),2)
         print('\nMean score of Sem {} ± {} 2*std'.format(scores_Sem,std_Sem))
@@ -408,11 +426,12 @@ while Convergence == False:
         Convergence = True
     
     if Convergence == True:
-        print('\n**Converged after {} runs**\n\n\n'.format(n))
+        print('\n**Converged after {} runs**\n\n\n'.format(ex['n']))
         text = ['\n**Converged after {} runs**\n\n\n']
-    if max_conv == n:
+    if max_conv == ex['n']:
         Convergence = True
-        print('Reached max_conv at {}'.format(n))
+        print('Reached max_conv at {}'.format(ex['n']))
+    
         
 #%%
 events_per_year = [score_per_run[i][1] for i in range(len(score_per_run))]

@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import matplotlib.colors as colors
 import generate_varimax
+from eofs.xarray import Eof
 from shapely.geometry.polygon import LinearRing
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import scipy 
@@ -439,6 +440,198 @@ def finalfigure(xrdata, file_name, kwrgs):
     g.fig.savefig(file_name ,dpi=250)
     #%%
     return
+        
+def EOF(data, scaling, neofs=10, center=False, weights=None):
+    import numpy as np
+    from eofs.xarray import Eof
+    # Create an EOF solver to do the EOF analysis. Square-root of cosine of
+    # latitude weights are applied before the computation of EOFs.
+    coslat = np.cos(np.deg2rad(data.coords['latitude'].values)).clip(0., 1.)
+    wgts = np.sqrt(coslat)[..., np.newaxis]
+    solver = Eof(np.squeeze(data), center=False, weights=wgts)
+    loadings = solver.eofs(neofs=neofs, eofscaling=scaling)
+    loadings.attrs['units'] = 'mode'
+    
+    return loadings.rename({'mode':'loads'})
+
+def project_eof_field(xarray, loadings, n_eofs_used):
+    
+    n_eofs  = loadings[:,0,0].size
+    n_space = loadings[0].size
+    n_time  = xarray.time.size
+    
+    matrix = np.reshape(xarray.values, (n_time, xarray[0].size))
+    matrix = np.nan_to_num(matrix)
+
+    # convert eof output to matrix
+    Ceof = np.reshape( loadings.values, (n_eofs, n_space) ) 
+    C = np.nan_to_num(Ceof)
+
+#    # Calculate std over entire eof time series
+#    PCs_all = solver.pcs(pcscaling=scaling, npcs=n_eofs_used)
+#    PCstd_all = [float(np.std(PCs_all[:,i])) for i in range(n_eofs_used)]
+    
+    PCi = np.zeros( (n_time, n_eofs_used) )
+    PCstd = np.zeros( (n_eofs_used) )
+#    PCi_unitvar = np.zeros( (n_time, n_eofs_used) )
+    PCi_mean = np.zeros( (n_eofs_used) )
+    for i in range(n_eofs_used):
+    
+        PCi[:,i] = np.dot( matrix, C[i,:] )
+        
+        PCstd[i] = np.std(PCi[:,i])
+        PCi_mean[i] = np.mean(PCi[:,i])
+    
+    return PCi, PCstd, PCi_mean
+
+
+
+def extract_pattern(Composite, totaltimeserie, n_eofs_used, loadings, weights):
+    # Get oefs from Composite
+    
+    
+    Composite = Composite * weights
+    totaltimeserie = totaltimeserie * weights
+
+    
+    # Project hot day fields upon EOFS 
+    PCi_comp, PCstd_comp, PCi_mean_comp = project_eof_field(
+                                    Composite, loadings, n_eofs_used)
+
+    # Project total timeseries on main EOFs
+    PCi_all, PCstd_all, PCi_mean_nor = project_eof_field(
+                                    totaltimeserie, loadings, n_eofs_used)
+
+    # Determine deviating PCs of compososite with respect to totaltimeserie 
+    # using absolute value of normalized PCs
+    #### Depricated #####
+    #    ratio_std = PCstd_nor / PCstd_hot
+    #    ratio_mean = (PCi_mean_nor / PCi_mean_hot) * np.median(PCi_mean_nor)**-1
+    #    plt.figure()
+    #    plt.title('Ratio variability in \'normal\' time series\ndivided by variability between hot days')
+    #    plt.plot(ratio_std)
+    #    plt.figure()
+    #    plt.title('Ratio of mean PC values in \'normal\' time series\ndivided by hot days')
+    #    plt.ylim( (np.min(ratio_mean)-1, np.max(ratio_mean)+1  ) )
+    #    plt.plot(ratio_mean)
+    #### End ######
+    
+    PCstd_all = [float(np.std(PCi_all[:,i])) for i in range(n_eofs_used)]
+    # Normalize PC values w.r.t. variability in total time serie
+    PCi_mean_comp = PCi_mean_comp / PCstd_all
+#    plt.figure()
+#    plt.ylim( (np.min(PCi_mean_comp)-1, np.max(PCi_mean_comp)+1  ) )
+#    plt.plot(PCi_mean_comp)
+#    plt.plot(PCi_mean_comp)
+      
+#    for i in range(2):
+#        plt.figure()
+#        plt.title('PC {}\nnormalized by std (std from whole summer PC '
+#                  'timeseries)'.format(i))
+#        plt.axhline(0, color='black')
+#        plt.plot(PCi_comp[:,i]/PCstd_all[i])
+#        plt.axhline(PCi_mean_comp[i])
+        
+#    plt.figure()
+#    plt.plot(solver.eigenvalues()[:n_eofs_used])
+#    print('Mean value PC time series: {}'.format(PCi_mean[0]))
+#    print('std value PC time series: {}'.format(PCstd[0]))
+        
+    
+    def Relevant_PCs(PCi_mean_comp, n_eofs_used):
+        
+        absolute_values = xr.DataArray(data=PCi_mean_comp, coords=[range(n_eofs_used)], 
+                              dims=['loads'], name='xarray')
+        anomalous = absolute_values.where(abs(absolute_values.values) > 
+                          (absolute_values.mean(dim='loads') + absolute_values.std()).values)
+        PC_imp_abs = anomalous.dropna(how='all', dim='loads')
+    
+        absolute_values = xr.DataArray(data=PCi_mean_comp, coords=[range(n_eofs_used)], 
+                                  dims=['loads'], name='xarray')
+        return PC_imp_abs, absolute_values
+    
+#    PC_imp_var, absolute_values = Relevant_PCs(ratio_std, n_eofs_used)
+#    PC_imp_rel, absolute_values = Relevant_PCs(ratio_mean, n_eofs_used)
+    PC_imp_abs, absolute_values = Relevant_PCs(PCi_mean_comp, n_eofs_used)
+    
+    plt.figure()
+    plt.title('Pcs deviation (in std) from total variability')
+    for n_eof in range(n_eofs_used):
+        plt.axhline(0, color='black')
+        plt.axhline(absolute_values.mean(dim='loads') + absolute_values.std().values, color='red')
+        plt.axhline(-1*(absolute_values.mean(dim='loads') + absolute_values.std().values), color='blue')  
+        plt.scatter(n_eof, absolute_values[n_eof])
+    
+    important_modes = list(PC_imp_abs.loads.values)
+    array = np.zeros( (len(PC_imp_abs),Composite.latitude.size, Composite.longitude.size) )
+    important_eofs = xr.DataArray(data=array, coords=[important_modes, Composite.latitude, Composite.longitude], 
+                          dims=['loads','latitude','longitude'], name='loadings')
+    
+    
+    for eof in important_modes:
+        idx = important_modes.index(eof)
+        single_eof = loadings.sel(loads=eof) * np.sign(absolute_values.sel(loads=eof))
+        important_eofs[idx] = single_eof
+        
+    # calculate weighted mean of relevant PCs (weighted on deviation from total
+    # variability)
+    weights = abs(PC_imp_abs) / np.mean(abs(PC_imp_abs))
+    important_eofs_w = xr.DataArray(data=array, coords=[important_modes, Composite.latitude, Composite.longitude], 
+                          dims=['loads','latitude','longitude'], name='loadings')
+    for eof in important_modes:
+        idx = important_modes.index(eof)
+        single_eof = loadings.sel(loads=eof) * np.sign(absolute_values.sel(loads=eof))
+        important_eofs_w[idx] = single_eof * weights.sel(loads=eof)
+    
+    wmean_eofs = important_eofs_w.mean(dim='loads', keep_attrs = True) 
+    
+    
+    return important_eofs, wmean_eofs, PC_imp_abs
+    
+
+def varimax_PCA_sem(xarray, max_comps):
+    
+    xarray = area_weighted(xarray)
+    geo_object = xarray
+    lats = geo_object.latitude.values
+    lons = geo_object.longitude.values
+    geo_data = xarray.values
+    flattened = np.reshape(np.array(geo_data), 
+                           (geo_data.shape[0], np.prod(geo_data.shape[1:])))
+    nonmask_flat = np.where(np.array(flattened)[0] != 0.)[0]
+    nonmasked = flattened[:,nonmask_flat]
+    
+    
+    # convert to nonmasked array
+    data = nonmasked
+    truncate_by = 'max_comps'
+    max_comps=max_comps
+    fraction_explained_variance=0.9
+    verbosity=0
+    
+    var_standard = generate_varimax.get_varimax_loadings_standard(data=data,
+                        truncate_by = truncate_by, 
+                        max_comps=max_comps,
+                        fraction_explained_variance=fraction_explained_variance,
+                        verbosity=verbosity,
+                        )
+    # Plug in nonmasked values into the original lonlat with mask
+    npcopy = np.array(flattened[:max_comps])
+    npcopy[:,nonmask_flat] = np.swapaxes(var_standard['weights'],1,0)
+    nplonlat = np.reshape(npcopy, (npcopy.shape[0], lats.size, lons.size)) 
+                                                   
+    
+    # convert to xarray
+    xrarray_patterns = xr.DataArray(nplonlat, coords=[np.arange(0,max_comps), lats, 
+                                 lons], 
+                                dims=['loads', 'latitude','longitude'], 
+                                name='rot_pca_standard')
+#    PCs = xr.DataArray(np.swapaxes(var_standard['comps_ts'],1,0), 
+#                       coords = [np.arange(0,max_comps)], 
+#                       dims = ['modes'], 
+#                       name = 'PCs')
+    
+    return xrarray_patterns
 
 
 def mcKmean(train, ex):
@@ -484,7 +677,7 @@ def mcKmean(train, ex):
         for p in pthresholds:	
             p_pred.append(np.percentile(crosscorr.values, p*10))
         pattern_p[idx] = p_pred
-    ds_mcK = xr.Dataset( {'pattern' : pattern, 'ts' : pattern_ts, 'perc' : pattern_p} )
+    ds_mcK = xr.Dataset( {'pattern' : pattern, 'ts' : crosscorr, 'perc' : pattern_p} )
     return ds_mcK
 
 def extract_precursor(train, ex):
@@ -1103,12 +1296,8 @@ def rand_traintest(RV_ts, Prec_reg, ex):
         a_conditions_failed = False
         # Divide into random sampled 25 year for train & rest for test
     #        n_years_sampled = int((ex['endyear'] - ex['startyear']+1)*0.66)
-        if ex['method'] == 'random':
-            rand_test_years = np.random.choice(all_years, ex['leave_n_years_out'], replace=False)
-        elif ex['method'] == 'iter':
-            ex['leave_n_years_out'] = 1
-            rand_test_years = [all_years[ex['n']]]
-            
+        
+        rand_test_years = np.random.choice(all_years, ex['leave_n_years_out'], replace=False)
     
             
         # test duplicates
@@ -1152,7 +1341,7 @@ def rand_traintest(RV_ts, Prec_reg, ex):
         diff           = abs(len(event_test) - exp_events)
         
         print('test year is {}, with {} events'.format(test_years, len(event_test)))
-        if diff > tolerance and ex['method']=='random': 
+        if diff > tolerance: 
             print('not a representative sample, drawing new sample')
             a_conditions_failed = True
                    

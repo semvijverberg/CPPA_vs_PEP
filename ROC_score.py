@@ -8,7 +8,7 @@ Created on Mon Oct 15 17:50:16 2018
 import numpy
 import random
 
-def ROC_score(predictions, observed, thr_event, lag, n_boot, thr_pred=None):
+def ROC_score(predictions, observed, thr_event, lag, n_boot, thr_pred='default'):
     
 #    predictions = crosscorr_mcK
 #    observed = mcKts
