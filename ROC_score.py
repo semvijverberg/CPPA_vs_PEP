@@ -10,9 +10,9 @@ import random
 
 def ROC_score(predictions, observed, thr_event, lag, n_boot, thr_pred='default'):
     
-#    predictions = crosscorr_mcK
-#    observed = mcKts
-#    thr_event = hotdaythreshold
+#    predictions = ex['test_ts_mcK'][idx]
+#    observed = RV_ts
+#    thr_event = ex['hotdaythres']
     
    # calculate ROC scores
     observed = numpy.copy(observed)

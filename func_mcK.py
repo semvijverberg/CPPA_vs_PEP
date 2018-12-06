@@ -13,7 +13,6 @@ from netCDF4 import num2date
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import matplotlib.colors as colors
-import generate_varimax
 from shapely.geometry.polygon import LinearRing
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import scipy 

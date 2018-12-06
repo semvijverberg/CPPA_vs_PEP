@@ -206,16 +206,29 @@ def find_precursor(RV_ts, Prec_reg, ex):
         
         
         if ex['method'] == 'iter':
-            ex['test_ts_mcK'][idx] = np.append(ex['test_ts_mcK'], crosscorr_mcK.values)
-            ex['test_ts_Sem'][idx] = np.append(ex['test_ts_Sem'], crosscorr_Sem.values)
-            print(len(ex['test_ts_Sem']))
+            if ex['n'] == 0:
+                ex['test_ts_mcK'][idx] = crosscorr_mcK.values 
+                ex['test_ts_Sem'][idx] = crosscorr_Sem.values
+                ex['test_RV'][idx]  = test['RV'].values
+#                ex['test_RV_Sem'][idx]  = test['RV'].values
+            else:
+#                update_ROCS = ex['test_ts_mcK'][idx].append(list(crosscorr_mcK.values))
+                ex['test_ts_mcK'][idx] = np.concatenate( [ex['test_ts_mcK'][idx], crosscorr_mcK.values] )
+                ex['test_ts_Sem'][idx] = np.concatenate( [ex['test_ts_Sem'][idx], crosscorr_Sem.values] )
+                ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )
+#                ex['test_RV_Sem'][idx] = np.concatenate( [ex['test_RV_Sem'][idx], var_test_reg.values] )
+#            print(len(ex['test_ts_Sem']))
         
-            if  ex['n'] == ex['n_years']:
-                n_boot = 1
-                ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], RV_ts,
+            if  ex['n'] == ex['n_conv']:
+                n_boot = 5
+                ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, n_boot, 'default')
-                ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
+                ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, 0, 'default')[0]
+                print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+                '\t ±{:.2f} 2*std random events\n\n'.format(region, 
+                  lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
+            
                 
         elif ['method'] == 'random':        
                                
@@ -261,20 +274,20 @@ def find_precursor(RV_ts, Prec_reg, ex):
                 ROC_Sem = ROC_boot = 0.5
                                   
             
-        print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
-            '\t ±{:.2f} 2*std random events\n\n'.format(region, 
-              lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
+            print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+                '\t ±{:.2f} 2*std random events\n\n'.format(region, 
+                  lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
         
-    # store output:
-    ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
-                      dims=['lag'], name='score_diff_lags',
-                      attrs={'units':'-'})
-    ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
-                      dims=['lag'], name='score_diff_lags',
-                      attrs={'units':'-'})
+        # store output:
+        ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
+                          dims=['lag'], name='score_diff_lags',
+                          attrs={'units':'-'})
+        ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
+                          dims=['lag'], name='score_diff_lags',
+                          attrs={'units':'-'})
 
     
-    score_per_run.append([test_years, len(test['events']), ds_mcK, ds_Sem, float(ROC_boot)])
+    score_per_run.append([test_years, len(test['events']), ds_mcK, ds_Sem, ROC_boot])
     
     
 # ============================= ===============================================
@@ -312,9 +325,7 @@ leave_n_out = True ; ex['method'] = 'iter'
 
 max_conv = len(set(RV_ts.time.dt.year.values))
 ROC_leave_n_out = False
-if leave_n_out == True and ex['method'] == 'iter':
-    ex['test_ts_mcK'] = np.zeros( (len(ex['lags']),1) )
-    ex['test_ts_Sem'] = np.zeros(len(ex['lags']))
+
 
 
 score_per_run = []
@@ -326,9 +337,14 @@ ex['hotdaythres'] = hotdaythreshold
 ex['n_strongest'] = 15 
 ex['n_std'] = 1.5   
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
-ex['n_conv'] = 10
+ex['n_conv'] = ex['n_yrs'] -1 
 ex['toler'] = 0.010
+if leave_n_out == True and ex['method'] == 'iter':
+    ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
+    ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
+    ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
 Convergence = False ; Conv_mcK = False ; Conv_Sem = False
+
 
 ex['n'] = 0
 while Convergence == False:
@@ -343,7 +359,7 @@ while Convergence == False:
 #    conv_std = [np.std(ran_ROCS[:n]) for n in range(len(ran_ROCS))]
 #    plt.plot([np.std(ran_ROCS[:n]) for n in range(len(ran_ROCS))])
     def check_last_n_means(ds, n, ex):
-        diff_last_n_means       = np.zeros( (len(ex['lags'])) )
+        diff_last_n_means = np.zeros( (len(ex['lags'])) )
         ROC_at_lags = []
         means = []
         for lag in ex['lags']:
@@ -365,8 +381,8 @@ while Convergence == False:
             means.append( mean )
         return diff_last_n_means, ROC_at_lags, diff_means, means
     
-    
-    ex['n'] += 1
+    if ex['n'] >= ex['n_conv'] and ex['method'] == 'iter' and ex['leave_n_out'] == True:
+        Convergence = True
     
     # Check convergence of ROC score mcKinnon
     if ex['n'] >= ex['n_conv']:
@@ -428,9 +444,11 @@ while Convergence == False:
     if Convergence == True:
         print('\n**Converged after {} runs**\n\n\n'.format(ex['n']))
         text = ['\n**Converged after {} runs**\n\n\n']
-    if max_conv == ex['n']:
+    if ex['n'] == ex['n_conv']:
         Convergence = True
         print('Reached max_conv at {}'.format(ex['n']))
+        
+    ex['n'] += 1
     
         
 #%%
