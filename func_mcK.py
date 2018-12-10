@@ -15,430 +15,16 @@ import cartopy.crs as ccrs
 import matplotlib.colors as colors
 from shapely.geometry.polygon import LinearRing
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+import datetime
 import scipy 
 
-def read_T95(T95name, ex):
-    filepath = os.path.join(ex['path_pp'], T95name)
-    data = pd.read_csv(filepath)
-    datelist = []
-    values = []
-    for r in data.values:
-        year = int(r[0][:4])
-        month = int(r[0][5:7])
-        day = int(r[0][7:11])
-        string = '{}-{}-{}'.format(year, month, day)
-        values.append(float(r[0][10:]))
-        datelist.append( pd.Timestamp(string) )
-    
-    dates = pd.to_datetime(datelist)
-    RVts = xr.DataArray(values, coords=[dates], dims=['time'])
-    return RVts, dates
-
-def Ev_timeseries(xarray, threshold):   
-    Ev_ts = xarray.where( xarray.values > threshold) 
-    Ev_dates = Ev_ts.dropna(how='all', dim='time').time
-    return Ev_dates
-
-def timeseries_tofit_bins(xarray, ex):
-    datetime = pd.to_datetime(xarray['time'].values)
-    one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
-    
-    seldays_pp = pd.DatetimeIndex(start=one_yr[0], end=one_yr[-1], 
-                                freq=(datetime[1] - datetime[0]))
-    end_day = one_yr.max() 
-    # after time averaging over 'tfreq' number of days, you want that each year 
-    # consists of the same day. For this to be true, you need to make sure that
-    # the selday_pp period exactly fits in a integer multiple of 'tfreq'
-    temporal_freq = np.timedelta64(ex['tfreq'], 'D') 
-    fit_steps_yr = (end_day - seldays_pp.min() ) / temporal_freq
-    # line below: The +1 = include day 1 in counting
-    start_day = (end_day - (temporal_freq * np.round(fit_steps_yr, decimals=0))) \
-                + np.timedelta64(1, 'D') 
-    
-    def make_datestr_2(datetime, start_yr):
-        breakyr = datetime.year.max()
-        datesstr = [str(date).split('.', 1)[0] for date in start_yr.values]
-        nyears = (datetime.year[-1] - datetime.year[0])+1
-        startday = start_yr[0].strftime('%Y-%m-%dT%H:%M:%S')
-        endday = start_yr[-1].strftime('%Y-%m-%dT%H:%M:%S')
-        firstyear = startday[:4]
-        datesdt = start_yr
-        def plusyearnoleap(curr_yr, startday, endday, incr):
-            startday = startday.replace(firstyear, str(curr_yr+incr))
-            endday = endday.replace(firstyear, str(curr_yr+incr))
-            next_yr = pd.DatetimeIndex(start=startday, end=endday, 
-                            freq=(datetime[1] - datetime[0]))
-            # excluding leap year again
-            noleapdays = (((next_yr.month==2) & (next_yr.day==29))==False)
-            next_yr = next_yr[noleapdays].dropna(how='all')
-            return next_yr
-        
-        for yr in range(0,nyears-1):
-            curr_yr = yr+datetime.year[0]
-            next_yr = plusyearnoleap(curr_yr, startday, endday, 1)
-            datesdt = np.append(datesdt, next_yr)
-#            print(len(next_yr))
-#            nextstr = [str(date).split('.', 1)[0] for date in next_yr.values]
-#            datesstr = datesstr + nextstr
-#            print(nextstr[0])
-            
-            upd_start_yr = plusyearnoleap(next_yr.year[0], startday, endday, 1)
-
-            if next_yr.year[0] == breakyr:
-                break
-        datesdt = pd.to_datetime(datesdt)
-        return datesdt, upd_start_yr
-    
-    start_yr = pd.DatetimeIndex(start=start_day, end=end_day, 
-                                freq=(datetime[1] - datetime[0]))
-    # exluding leap year from cdo select string
-    noleapdays = (((start_yr.month==2) & (start_yr.day==29))==False)
-    start_yr = start_yr[noleapdays].dropna(how='all')
-    datesdt, next_yr = make_datestr_2(datetime, start_yr)
-    months = dict( {1:'jan',2:'feb',3:'mar',4:'apr',5:'may',6:'jun',7:'jul',
-                         8:'aug',9:'sep',10:'okt',11:'nov',12:'dec' } )
-    startdatestr = '{} {}'.format(start_day.day, months[start_day.month])
-    enddatestr   = '{} {}'.format(end_day.day, months[end_day.month])
-    print('adjusted time series to fit bins: \nFrom {} to {}'.format(
-                startdatestr, enddatestr))
-    adj_array = xarray.sel(time=datesdt)
-    return adj_array, datesdt
-    
-
-def time_mean_bins(xarray, ex):
-    datetime = pd.to_datetime(xarray['time'].values)
-    one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
-    
-    if one_yr.size % ex['tfreq'] != 0:
-        possible = []
-        for i in np.arange(1,20):
-            if 214%i == 0:
-                possible.append(i)
-        print('Error: stepsize {} does not fit in one year\n '
-                         ' supply an integer that fits {}'.format(
-                             ex['tfreq'], one_yr.size))   
-        print('\n Stepsize that do fit are {}'.format(possible))
-        print('\n Will shorten the \'subyear\', so that it the temporal'
-              'frequency fits in one year')
-        xarray, datetime = timeseries_tofit_bins(xarray, ex)
-        one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
-          
-    else:
-        pass
-    fit_steps_yr = (one_yr.size)  / ex['tfreq']
-    bins = list(np.repeat(np.arange(0, fit_steps_yr), ex['tfreq']))
-    n_years = (datetime.year[-1] - datetime.year[0]) + 1
-    for y in np.arange(1, n_years):
-        x = np.repeat(np.arange(0, fit_steps_yr), ex['tfreq'])
-        x = x + fit_steps_yr * y
-        [bins.append(i) for i in x]
-    label_bins = xr.DataArray(bins, [xarray.coords['time'][:]], name='time')
-    label_dates = xr.DataArray(xarray.time.values, [xarray.coords['time'][:]], name='time')
-    xarray['bins'] = label_bins
-    xarray['time_dates'] = label_dates
-    xarray = xarray.set_index(time=['bins','time_dates'])
-    
-    half_step = ex['tfreq']/2.
-    newidx = np.arange(half_step, datetime.size, ex['tfreq'], dtype=int)
-    newdate = label_dates[newidx]
-    
-
-    group_bins = xarray.groupby('bins').mean(dim='time', keep_attrs=True)
-    group_bins['bins'] = newdate.values
-    dates = pd.to_datetime(newdate.values)
-    return group_bins.rename({'bins' : 'time'}), dates
-
-def expand_times_for_lags(datetime, ex):
-    expanded_time = []
-    for yr in set(datetime.year):
-        one_yr = datetime.where(datetime.year == yr).dropna(how='any')
-        start_mcK = one_yr[0]
-        #start day shifted half a time step
-        half_step = ex['tfreq']/2.
-#        origshift = np.arange(half_step, datetime.size, ex['tfreq'], dtype=int)
-        start_mcK = start_mcK - np.timedelta64(int(half_step+0.49), 'D')
-        last_day = '{}{}'.format(yr, ex['senddate'][4:])
-        end_mcK   = pd.to_datetime(last_day)
-#        adj_year = pd.DatetimeIndex(start=start_mcK, end=end_mcK, 
-#                                    freq=(datetime[1] - datetime[0]), 
-#                                    closed = None).values
-        steps = len(one_yr)
-        shift_start = start_mcK - (steps) * np.timedelta64(ex['tfreq'], 'D')
-        adj_year = pd.DatetimeIndex(start=shift_start, end=end_mcK, 
-                                    freq=pd.Timedelta( '1 days'), 
-                                    closed = None).values
-        [expanded_time.append(date) for date in adj_year]
-    
-    return pd.to_datetime(expanded_time)
-
-def make_datestr(dates, ex):
-    start_yr = pd.DatetimeIndex(start=ex['sstartdate'], end=ex['senddate'], 
-                                freq=(dates[1] - dates[0]))
-    breakyr = dates.year.max()
-    datesstr = [str(date).split('.', 1)[0] for date in start_yr.values]
-    nyears = (dates.year[-1] - dates.year[0])+1
-    startday = start_yr[0].strftime('%Y-%m-%dT%H:%M:%S')
-    endday = start_yr[-1].strftime('%Y-%m-%dT%H:%M:%S')
-    firstyear = startday[:4]
-    def plusyearnoleap(curr_yr, startday, endday, incr):
-        startday = startday.replace(firstyear, str(curr_yr+incr))
-        endday = endday.replace(firstyear, str(curr_yr+incr))
-        next_yr = pd.DatetimeIndex(start=startday, end=endday, 
-                        freq=(dates[1] - dates[0]))
-        # excluding leap year again
-        noleapdays = (((next_yr.month==2) & (next_yr.day==29))==False)
-        next_yr = next_yr[noleapdays].dropna(how='all')
-        return next_yr
-    
-
-    for yr in range(0,nyears-1):
-        curr_yr = yr+dates.year[0]
-        next_yr = plusyearnoleap(curr_yr, startday, endday, 1)
-        nextstr = [str(date).split('.', 1)[0] for date in next_yr.values]
-        datesstr = datesstr + nextstr
-
-        if next_yr.year[0] == breakyr:
-            break
-    datesmcK = pd.to_datetime(datesstr)
-    return datesmcK
-
-def import_array(filename, ex):
-    file_path = os.path.join(ex['path_pp'], filename)        
-    ncdf = xr.open_dataset(file_path, decode_cf=True, decode_coords=True, decode_times=False)
-    variables = list(ncdf.variables.keys())
-    strvars = [' {} '.format(var) for var in variables]
-    var = [var for var in strvars if var not in ' time time_bnds longitude latitude '][0] 
-    marray = np.squeeze(ncdf.to_array(file_path).rename(({file_path: var})))
-    numtime = marray['time']
-    dates = num2date(numtime, units=numtime.units, calendar=numtime.attrs['calendar'])
-    dates = pd.to_datetime(dates)
-#    print('temporal frequency \'dt\' is: \n{}'.format(dates[1]- dates[0]))
-    marray['time'] = dates
-    return marray
-
-def save_figure(data, path):
-    import os
-    import matplotlib.pyplot as plt
-#    if 'path' in locals():
-#        pass
-#    else:
-#        path = '/Users/semvijverberg/Downloads'
-    if path == 'default':
-        path = '/Users/semvijverberg/Downloads'
-    else:
-        path = path
-    import datetime
-    today = datetime.datetime.today().strftime("%d-%m-%y_%H'%M")
-    if type(data.name) is not type(None):
-        name = data.name.replace(' ', '_')
-    if 'name' in locals():
-        print('input name is: {}'.format(name))
-        name = name + '.jpeg'
-        pass
-    else:
-        name = 'fig_' + today + '.jpeg'
-    print(('{} to path {}'.format(name, path)))
-    plt.savefig(os.path.join(path,name), format='jpeg', dpi=300, bbox_inches='tight')
-    
-def area_weighted(xarray):
-    # Area weighted     
-    coslat = np.cos(np.deg2rad(xarray.coords['latitude'].values)).clip(0., 1.)
-    area_weights = np.tile(np.sqrt(coslat)[..., np.newaxis],(1,xarray.longitude.size))
-    xarray.values = xarray.values * area_weights 
-    return xarray
-
-def xarray_plot(data, path='default', name = 'default', saving=False):
-    # from plotting import save_figure
-    import matplotlib.pyplot as plt
-    import cartopy.crs as ccrs
-    import numpy as np
-#    original
-    plt.figure()
-    if len(data.longitude[np.where(data.longitude > 180)[0]]) != 0:
-        if data.longitude.where(data.longitude==0).dropna(dim='longitude', how='all') == 0.:
-            print('hoi')   
-            data = convert_longitude(data)
-    else:
-        pass
-    if data.ndim != 2:
-        print("number of dimension is {}, printing first element of first dimension".format(np.squeeze(data).ndim))
-        data = data[0]
-    else:
-        pass
-    if 'mask' in list(data.coords.keys()):
-        cen_lon = data.where(data.mask==True, drop=True).longitude.mean()
-        data = data.where(data.mask==True, drop=True)
-    else:
-        cen_lon = data.longitude.mean().values
-    proj = ccrs.PlateCarree(central_longitude=cen_lon)
-    ax = plt.axes(projection=proj)
-    ax.coastlines()
-    vmin = np.round(float(data.min())-0.01,decimals=2) 
-    vmax = np.round(float(data.max())+0.01,decimals=2) 
-    vmin = -max(abs(vmin),vmax) ; vmax = max(abs(vmin),vmax)
-    # ax.set_global()
-    if 'mask' in list(data.coords.keys()):
-        plot = data.copy().where(data.mask==True).plot.pcolormesh(ax=ax, cmap=plt.cm.RdBu_r,
-                             transform=ccrs.PlateCarree(), add_colorbar=True,
-                             vmin=vmin, vmax=vmax)
-    else:
-        plot = data.plot.pcolormesh(ax=ax, cmap=plt.cm.RdBu_r,
-                             transform=ccrs.PlateCarree(), add_colorbar=True,
-                             vmin=vmin, vmax=vmax)
-    if saving == True:
-        save_figure(data, path=path)
-    plt.show()
-    
-def convert_longitude(data):
-    import numpy as np
-    import xarray as xr
-    lon_above = data.longitude[np.where(data.longitude > 180)[0]]
-    lon_normal = data.longitude[np.where(data.longitude <= 180)[0]]
-    # roll all values to the right for len(lon_above amount of steps)
-    data = data.roll(longitude=len(lon_above))
-    # adapt longitude values above 180 to negative values
-    substract = lambda x, y: (x - y)
-    lon_above = xr.apply_ufunc(substract, lon_above, 360)
-    if lon_normal[0] == 0.:
-        convert_lon = xr.concat([lon_above, lon_normal], dim='longitude')
-    else:
-        convert_lon = xr.concat([lon_normal, lon_above], dim='longitude')
-    data['longitude'] = convert_lon
-    return data
 
 
-def rolling_mean_xr(xarray, win):
-    closed = int(win/2)
-    flatarray = xarray.values.flatten()
-    ext_array = np.insert(flatarray, 0, flatarray[-closed:])
-    ext_array = np.insert(ext_array, 0, flatarray[:closed])
-    
-    df = pd.DataFrame(ext_array)
-    std = xarray.where(xarray.values!=0.).std().values
-#    scipy.signal.gaussian(win, std)
-    rollmean = df.rolling(win, center=True, 
-                          win_type='gaussian').mean(std=std).dropna()
-    
-    # replace values with smoothened values
-    new_xarray = xarray.copy()
-    new_values = np.reshape(rollmean.squeeze().values, xarray.shape)
-    # ensure LSM mask
-    mask = np.array((xarray.values!=0.),dtype=int)
-    new_xarray.values = (new_values * mask)
-
-    return new_xarray
-
-def to_datesmcK(datesmcK, to_hour, from_hour):
-    dt_hours = to_hour + from_hour
-    matchdaysmcK = datesmcK + pd.Timedelta(int(dt_hours), unit='h')
-    return xr.DataArray(matchdaysmcK, dims=['time'])
-
-
-def find_region(data, region='Mckinnonplot'):
-    if region == 'Mckinnonplot':
-        west_lon = -240; east_lon = -40; south_lat = -10; north_lat = 80
-
-    elif region ==  'U.S.':
-        west_lon = -120; east_lon = -70; south_lat = 20; north_lat = 50
-    elif region ==  'U.S.cluster':
-        west_lon = -100; east_lon = -70; south_lat = 20; north_lat = 50
-    elif region ==  'PEPrectangle':
-        west_lon = -215; east_lon = -125; south_lat = 19; north_lat = 50
-    elif region ==  'Pacific':
-        west_lon = -215; east_lon = -120; south_lat = 19; north_lat = 60
-    elif region ==  'Whole':
-        west_lon = -360; east_lon = -1; south_lat = -80; north_lat = 80
-    elif region ==  'Southern':
-        west_lon = -20; east_lon = -2; south_lat = -80; north_lat = -60
-
-    region_coords = [west_lon, east_lon, south_lat, north_lat]
-    import numpy as np
-    def find_nearest(array, value):
-        idx = (np.abs(array - value)).argmin()
-        return int(idx)
-#    if data.longitude.values[-1] > 180:
-#        all_values = data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360+east_lon))
-#        lon_idx = np.arange(find_nearest(data['longitude'], 360 + west_lon), find_nearest(data['longitude'], 360+east_lon))
-#        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
-        
-    if west_lon <0 and east_lon > 0:
-        # left_of_meridional = np.array(data.sel(latitude=slice(north_lat, south_lat), longitude=slice(0, east_lon)))
-        # right_of_meridional = np.array(data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360)))
-        # all_values = np.concatenate((np.reshape(left_of_meridional, (np.size(left_of_meridional))), np.reshape(right_of_meridional, np.size(right_of_meridional))))
-        lon_idx = np.concatenate(( np.arange(find_nearest(data['longitude'], 360 + west_lon), len(data['longitude'])),
-                              np.arange(0,find_nearest(data['longitude'], east_lon), 1) ))
-        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
-        all_values = data.sel(latitude=slice(north_lat, south_lat), 
-                              longitude=(data.longitude > 360 + west_lon) | (data.longitude < east_lon))
-    if west_lon < 0 and east_lon < 0:
-        all_values = data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360+east_lon))
-        lon_idx = np.arange(find_nearest(data['longitude'], 360 + west_lon), find_nearest(data['longitude'], 360+east_lon))
-        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
-
-    return all_values, region_coords
-
-
-def finalfigure(xrdata, file_name, kwrgs):
-    #%%
-#    clevels = '' ; vmin=-0.4 ; vmax=0.4
-    lons = xrdata.longitude.values
-    lats = xrdata.latitude.values
-    strvars = [' {} '.format(var) for var in list(xrdata.dims)]
-    var = [var for var in strvars if var not in ' longitude latitude '][0] 
-    var = var.replace(' ', '')
-    g = xr.plot.FacetGrid(xrdata, col=var, col_wrap=kwrgs['column'], sharex=True,
-                      sharey=True, subplot_kws={'projection': kwrgs['map_proj']},
-                      aspect= (xrdata.longitude.size) / xrdata.latitude.size, size=3)
-    figwidth = g.fig.get_figwidth() ; figheight = g.fig.get_figheight()
-
-
-    if kwrgs['clevels'] == 'default':
-        vmin = np.round(float(xrdata.min())-0.01,decimals=2) ; vmax = np.round(float(xrdata.max())+0.01,decimals=2)
-        clevels = np.linspace(-max(abs(vmin),vmax),max(abs(vmin),vmax),17) # choose uneven number for # steps
-    else:
-        vmin=kwrgs['vmin']
-        vmax=kwrgs['vmax']
-        clevels = np.linspace(vmin,vmax,kwrgs['steps'])
-    cmap = kwrgs['cmap']
-    
-    n_plots = xrdata[var].size
-    for n_ax in np.arange(0,n_plots):
-        ax = g.axes.flatten()[n_ax]
-#        print(n_ax)
-        plotdata = xrdata[n_ax]
-        im = plotdata.plot.contourf(ax=ax, cmap=cmap,
-                               transform=ccrs.PlateCarree(),
-                               subplot_kws={'projection': kwrgs['map_proj']},
-                               levels=clevels, add_colorbar=False)
-        ax.coastlines(color='grey', alpha=0.3)
-        
-        ax.set_extent([lons[0], lons[-1], lats[0], lats[-1]], ccrs.PlateCarree())
-#        lons = [-5.8, -5.8, -5.5, -5.5]
-#        lats = [50.27, 50.48, 50.48, 50.27]
-        lons_sq = [-215, -215, -125, -125]
-        lats_sq = [50, 19, 19, 50]
-        ring = LinearRing(list(zip(lons_sq , lats_sq )))
-        ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green')
-        if kwrgs['map_proj'].proj4_params['proj'] in ['merc', 'Plat']:
-            print(True)
-            gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True)
-            gl.xlabels_top = False;
-    #        gl.xformatter = LONGITUDE_FORMATTER
-            gl.ylabels_right = False;
-            gl.xlabels_bottom = False
-    #        gl.yformatter = LATITUDE_FORMATTER
-        else:
-            pass
-        
-    g.fig.text(0.5, 0.95, kwrgs['title'], fontsize=15, horizontalalignment='center')
-    cbar_ax = g.fig.add_axes([0.25, (figheight/25)/n_plots, 
-                                  0.5, (figheight/25)/n_plots])
-    plt.colorbar(im, cax=cbar_ax, orientation='horizontal', 
-                 label=xrdata.attrs['units'], extend='neither')
-    g.fig.savefig(file_name ,dpi=250)
-    #%%
-    return
-
+# =============================================================================
+# =============================================================================
+# Wrapper functions
+# =============================================================================
+# =============================================================================
 
 def mcKmean(train, ex):
 
@@ -485,6 +71,65 @@ def mcKmean(train, ex):
         pattern_p[idx] = p_pred
     ds_mcK = xr.Dataset( {'pattern' : pattern, 'ts' : pattern_ts, 'perc' : pattern_p} )
     return ds_mcK
+
+def find_precursor(RV_ts, Prec_reg, ex):
+   #%% 
+    if ex['leave_n_out'] == True and ex['method'] == 'random':
+        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
+                                          ex)
+        
+        foldername = 'leave_{}_out_{}_{}_tf{}_{}'.format(ex['leave_n_years_out'],
+                            ex['startyear'], ex['endyear'], ex['tfreq'],
+                            ex['lags'])
+        ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
+    if ex['leave_n_out'] == True and ex['method'] == 'iter':
+        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
+                                          ex)
+        now = datetime.datetime.now()
+        ex['exp_folder'] = '{}_output_{}_{}_tf{}_lags{}_{}hr'.format(ex['method'],
+                          ex['startyear'], ex['endyear'],
+                          ex['tfreq'], ex['lags'], now.strftime("%Y-%m-%d"))
+    elif ex['leave_n_out'] == False:
+        train = dict( { 'Prec'  : Prec_reg,
+                        'RV'    : RV_ts,
+                        'events': Ev_timeseries(RV_ts, ex['hotdaythres'])})
+        test = train.copy()
+
+        foldername = 'hindcast_{}_{}_tf{}_{}'.format(ex['startyear'],
+                             ex['endyear'], ex['tfreq'], ex['lags'])
+        ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
+        ex['test_years'] = 'all_years'
+    
+
+
+# =============================================================================
+#  Mean over 230 hot days
+# =============================================================================
+
+    ds_mcK = mcKmean(train, ex)  
+    
+# =============================================================================
+# Extracting feature to build spatial map
+# ============================================================================= 
+   
+    ds_Sem = extract_precursor(train, ex)   
+    if ex['wghts_accross_lags'] == True:
+        ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
+
+# =============================================================================
+# Force Leave_n_out validation even though pattern is based on whole dataset
+# =============================================================================
+    if ex['leave_n_out'] == False and ex['ROC_leave_n_out'] == True:
+        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
+                                          ex)
+        
+        foldername = 'Pattern_full_leave_{}_out_validation_{}_{}_tf{}_{}'.format(
+                ex['leave_n_years_out'], ex['startyear'], ex['endyear'], 
+                ex['tfreq'],ex['lags'])
+    
+        ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
+        
+    return test, train, ds_mcK, ds_Sem, ex
 
 def extract_precursor(train, ex):
     
@@ -554,6 +199,11 @@ def extract_precursor(train, ex):
     
     return ds_Sem
 
+# =============================================================================
+# =============================================================================
+# Core functions
+# =============================================================================
+# =============================================================================
 
 def extract_commun(composite, ts_3d, binary_events, ex):
     x=0
@@ -570,43 +220,44 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     
     all_yrs_set = list(set(ts_3d.time.dt.year.values))
     randyrs_trainfeat = np.random.choice(all_yrs_set, int(len(all_yrs_set)/2), replace=False)
-    randyrs_fitwgts = [yr for yr in all_yrs_set if yr not in randyrs_trainfeat]
-    
-    yrs_fitwghts = [i for i in range(len(full_years)) if full_years[i] in randyrs_fitwgts]
-    yrs_trainfeat =  [i for i in range(len(comp_years)) if comp_years[i] in randyrs_trainfeat]
+    randyrs_trainwgts = [yr for yr in all_yrs_set if yr not in randyrs_trainfeat]
+
+    yrs_trainfeat =  [i for i in range(len(comp_years)) if comp_years[i] in randyrs_trainfeat]    
+    yrs_trainwghts = [i for i in range(len(full_years)) if full_years[i] in randyrs_trainwgts]
 
 
 
-#    # composite taken only over train feature part
-#    mean = composite.isel(time=yrs_trainfeat).mean(dim='time')
-#    # ts_3d only for train-weights part
-#    ts_3d_fitwghts = ts_3d.isel(time=yrs_fitwghts)
-#    bin_event_fitwghts = binary_events[yrs_fitwghts]
+    # composite taken only over train feature part
+    if ex['splittrainfeat'] == True:
+        mean = composite.isel(time=yrs_trainfeat).mean(dim='time')
+        # ts_3d only for train-weights part
+        ts_3d_trainwghts = ts_3d.isel(time=yrs_trainwghts)
+        bin_event_trainwghts = binary_events[yrs_trainwghts]
     
-#    # ts_3d only for concomitant trainfeature
-#    ts_3d_fitwghts = ts_3d.isel(time=yrs_trainfeat)
-#    bin_event_fitwghts = binary_events[yrs_trainfeat] #!!
-
-#    # ts_3d only for total time series
-    ts_3d_fitwghts = ts_3d
-    bin_event_fitwghts = binary_events
-    mean = composite.mean(dim='time')
-    # get a feeling for the variation within the composite, if anomalies are 
-    # persistent they are assigned with a heavier weight
-    std_lag =  ts_3d.std(dim='time')
-#    std_lag.plot()
-    # smoothen field
+    # ts_3d only for total time series
+    else:
+        ts_3d_trainwghts = ts_3d
+        bin_event_trainwghts = binary_events
+        mean = composite.mean(dim='time')
     
-#    std_lag.where(std_lag.values < 0.1*std_lag.std().values)
-#    std_lag.plot()
-#    std_lag = rolling_mean_xr(std_lag, 3)
     
-    StoN = abs(mean/std_lag)
-    StoN = StoN / np.mean(StoN)
-#    StoN = StoN.where(StoN.values < 10*StoN.median().values)
-#    StoN.plot()
-    StoN_wghts = mean*StoN
-    mean = StoN_wghts
+    if ex['wghts_std_anom'] == True: 
+        # get a feeling for the variation within the composite, if anomalies are 
+        # persistent they are assigned with a heavier weight
+        std_lag =  ts_3d.std(dim='time')
+    #    std_lag.plot()
+        # smoothen field
+        
+    #    std_lag.where(std_lag.values < 0.1*std_lag.std().values)
+    #    std_lag.plot()
+    #    std_lag = rolling_mean_xr(std_lag, 3)
+        
+        StoN = abs(mean/std_lag)
+        StoN = StoN / np.mean(StoN)
+    #    StoN = StoN.where(StoN.values < 10*StoN.median().values)
+    #    StoN.plot()
+        StoN_wghts = mean*StoN
+        mean = StoN_wghts
     
     nparray = np.reshape(np.nan_to_num(mean.values), mean.size)
     threshold = ex['n_std'] * np.std(nparray)
@@ -626,8 +277,8 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     # strength is defined as an area weighted values in the composite
     Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid)
     
-    actbox = np.reshape(ts_3d_fitwghts.values, (ts_3d_fitwghts.time.size, 
-                  ts_3d_fitwghts.latitude.size*ts_3d_fitwghts.longitude.size))    
+    actbox = np.reshape(ts_3d_trainwghts.values, (ts_3d_trainwghts.time.size, 
+                  ts_3d_trainwghts.latitude.size*ts_3d_trainwghts.longitude.size))    
 
     # get lonlat array of area for taking spatial means 
     lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
@@ -676,7 +327,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     # normal mean of extracted regions
     norm_mean = mean.where(mean.mask==True)
     
-    coeff_features = train_weights_LogReg(ts_regions_lag_i, bin_event_fitwghts)
+    coeff_features = train_weights_LogReg(ts_regions_lag_i, bin_event_trainwghts)
     # standardize coefficients
     coeff_features = (coeff_features - np.mean(coeff_features)) / np.std(coeff_features)
     features = np.arange(xrnpmap.min(), xrnpmap.max() + 1 ) 
@@ -736,6 +387,96 @@ def train_weights_LogReg(ts_regions_lag_i, binary_events):
 #          '\ttraindata fit {}\n'.format(score_on_trained))
   
     return np.squeeze(coeff_features)
+
+
+def rand_traintest(RV_ts, Prec_reg, ex):
+    all_years = np.arange(ex['startyear'], ex['endyear']+1)
+    
+    # conditions failed initally assumed True
+    a_conditions_failed = True
+    while a_conditions_failed == True:
+        
+        a_conditions_failed = False
+        # Divide into random sampled 25 year for train & rest for test
+    #        n_years_sampled = int((ex['endyear'] - ex['startyear']+1)*0.66)
+        if ex['method'] == 'random':
+            rand_test_years = np.random.choice(all_years, ex['leave_n_years_out'], replace=False)
+        elif ex['method'] == 'iter':
+            ex['leave_n_years_out'] = 1
+            rand_test_years = [all_years[ex['n']]]
+            
+    
+            
+        # test duplicates
+        a_conditions_failed = (len(set(rand_test_years)) != ex['leave_n_years_out'])
+        # Update random years to be selected as test years:
+    #        initial_years = [yr for yr in initial_years if yr not in random_test_years]
+        rand_train_years = [yr for yr in all_years if yr not in rand_test_years]
+        
+    #            datesRV = pd.to_datetime(RV_ts.time.values)
+    #            matchdatesRV = to_datesmcK(datesRV, datesRV[0].hour, Prec_reg.time[0].dt.hour)
+    #            RV_dates = list(matchdatesRV.time.dt.year.values)
+        full_years  = list(Prec_reg.time.dt.year.values)
+        RV_years  = list(RV_ts.time.dt.year.values)
+        
+    #            RV_dates_train_idx = [i for i in range(len(RV_dates)) if RV_dates[i] in rand_train_years]
+        Prec_train_idx = [i for i in range(len(full_years)) if full_years[i] in rand_train_years]
+        RV_train_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_train_years]
+        
+    #            RV_dates_test_idx = [i for i in range(len(RV_dates)) if RV_dates[i] in rand_test_years]
+        Prec_test_idx = [i for i in range(len(full_years)) if full_years[i] in rand_test_years]
+        RV_test_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_test_years]
+        
+        
+    #            dates_train = matchdatesRV.isel(time=RV_dates_train_idx)
+        Prec_train = Prec_reg.isel(time=Prec_train_idx)
+        RV_train = RV_ts.isel(time=RV_train_idx)
+        
+    #    if len(RV_dates_test_idx) 
+    #            dates_test = matchdatesRV.isel(time=RV_dates_test_idx)
+        Prec_test = Prec_reg.isel(time=Prec_test_idx)
+        RV_test = RV_ts.isel(time=RV_test_idx)
+        
+        event_train = Ev_timeseries(RV_train, ex['hotdaythres']).time
+        event_test = Ev_timeseries(RV_test, ex['hotdaythres']).time
+        
+        test_years = [yr for yr in list(set(RV_years)) if yr in rand_test_years]
+        
+        ave_events_pyr = (len(event_train) + len(event_test))/len(all_years)
+        exp_events     = int(ave_events_pyr) * len(rand_test_years)
+        tolerance      = 0.2 * exp_events
+        diff           = abs(len(event_test) - exp_events)
+        
+        print('test year is {}, with {} events'.format(test_years, len(event_test)))
+        if diff > tolerance and ex['method']=='random': 
+            print('not a representative sample, drawing new sample')
+            a_conditions_failed = True
+                   
+        
+        train = dict( {    'Prec'  : Prec_train,
+                           'RV'    : RV_train,
+                           'events' : event_train})
+        test = dict( {     'Prec'  : Prec_test,
+                           'RV'    : RV_test,
+                           'events' : event_test})
+    return train, test, test_years
+
+def filter_autocorrelation(ds_Sem, ex):
+    n_lags = len(ex['lags'])
+    n_lats = ds_Sem['pattern'].latitude.size
+    n_lons = ds_Sem['pattern'].longitude.size
+    ex['n_steps'] = len(ex['lags'])
+    weights = np.zeros( (n_lags, n_lats, n_lons) )
+    xrweights = ds_Sem['pattern'].copy()
+    xrweights.values = weights
+    for lag in ex['lags']:
+        data = np.nan_to_num(ds_Sem['pattern'].sel(lag=lag).values)
+        mask = np.ma.masked_array(data, dtype=bool)
+        idx = ex['lags'].index(lag)
+        weights[idx] = mask
+        xrweights[idx].values = mask
+    weights = np.sum(weights, axis=0)
+    return weights * ds_Sem['pattern']
 
 
 def Welchs_t_test(sample, full, alpha):
@@ -976,6 +717,328 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid):
     return np.array(A, dtype=int)
 
 
+
+def read_T95(T95name, ex):
+    filepath = os.path.join(ex['path_pp'], T95name)
+    data = pd.read_csv(filepath)
+    datelist = []
+    values = []
+    for r in data.values:
+        year = int(r[0][:4])
+        month = int(r[0][5:7])
+        day = int(r[0][7:11])
+        string = '{}-{}-{}'.format(year, month, day)
+        values.append(float(r[0][10:]))
+        datelist.append( pd.Timestamp(string) )
+    
+    dates = pd.to_datetime(datelist)
+    RVts = xr.DataArray(values, coords=[dates], dims=['time'])
+    return RVts, dates
+
+def Ev_timeseries(xarray, threshold):   
+    Ev_ts = xarray.where( xarray.values > threshold) 
+    Ev_dates = Ev_ts.dropna(how='all', dim='time').time
+    return Ev_dates
+
+def timeseries_tofit_bins(xarray, ex):
+    datetime = pd.to_datetime(xarray['time'].values)
+    one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
+    
+    seldays_pp = pd.DatetimeIndex(start=one_yr[0], end=one_yr[-1], 
+                                freq=(datetime[1] - datetime[0]))
+    end_day = one_yr.max() 
+    # after time averaging over 'tfreq' number of days, you want that each year 
+    # consists of the same day. For this to be true, you need to make sure that
+    # the selday_pp period exactly fits in a integer multiple of 'tfreq'
+    temporal_freq = np.timedelta64(ex['tfreq'], 'D') 
+    fit_steps_yr = (end_day - seldays_pp.min() ) / temporal_freq
+    # line below: The +1 = include day 1 in counting
+    start_day = (end_day - (temporal_freq * np.round(fit_steps_yr, decimals=0))) \
+                + np.timedelta64(1, 'D') 
+    
+    def make_datestr_2(datetime, start_yr):
+        breakyr = datetime.year.max()
+        datesstr = [str(date).split('.', 1)[0] for date in start_yr.values]
+        nyears = (datetime.year[-1] - datetime.year[0])+1
+        startday = start_yr[0].strftime('%Y-%m-%dT%H:%M:%S')
+        endday = start_yr[-1].strftime('%Y-%m-%dT%H:%M:%S')
+        firstyear = startday[:4]
+        datesdt = start_yr
+        def plusyearnoleap(curr_yr, startday, endday, incr):
+            startday = startday.replace(firstyear, str(curr_yr+incr))
+            endday = endday.replace(firstyear, str(curr_yr+incr))
+            next_yr = pd.DatetimeIndex(start=startday, end=endday, 
+                            freq=(datetime[1] - datetime[0]))
+            # excluding leap year again
+            noleapdays = (((next_yr.month==2) & (next_yr.day==29))==False)
+            next_yr = next_yr[noleapdays].dropna(how='all')
+            return next_yr
+        
+        for yr in range(0,nyears-1):
+            curr_yr = yr+datetime.year[0]
+            next_yr = plusyearnoleap(curr_yr, startday, endday, 1)
+            datesdt = np.append(datesdt, next_yr)
+#            print(len(next_yr))
+#            nextstr = [str(date).split('.', 1)[0] for date in next_yr.values]
+#            datesstr = datesstr + nextstr
+#            print(nextstr[0])
+            
+            upd_start_yr = plusyearnoleap(next_yr.year[0], startday, endday, 1)
+
+            if next_yr.year[0] == breakyr:
+                break
+        datesdt = pd.to_datetime(datesdt)
+        return datesdt, upd_start_yr
+    
+    start_yr = pd.DatetimeIndex(start=start_day, end=end_day, 
+                                freq=(datetime[1] - datetime[0]))
+    # exluding leap year from cdo select string
+    noleapdays = (((start_yr.month==2) & (start_yr.day==29))==False)
+    start_yr = start_yr[noleapdays].dropna(how='all')
+    datesdt, next_yr = make_datestr_2(datetime, start_yr)
+    months = dict( {1:'jan',2:'feb',3:'mar',4:'apr',5:'may',6:'jun',7:'jul',
+                         8:'aug',9:'sep',10:'okt',11:'nov',12:'dec' } )
+    startdatestr = '{} {}'.format(start_day.day, months[start_day.month])
+    enddatestr   = '{} {}'.format(end_day.day, months[end_day.month])
+    print('adjusted time series to fit bins: \nFrom {} to {}'.format(
+                startdatestr, enddatestr))
+    adj_array = xarray.sel(time=datesdt)
+    return adj_array, datesdt
+    
+
+def time_mean_bins(xarray, ex):
+    datetime = pd.to_datetime(xarray['time'].values)
+    one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
+    
+    if one_yr.size % ex['tfreq'] != 0:
+        possible = []
+        for i in np.arange(1,20):
+            if 214%i == 0:
+                possible.append(i)
+        print('Error: stepsize {} does not fit in one year\n '
+                         ' supply an integer that fits {}'.format(
+                             ex['tfreq'], one_yr.size))   
+        print('\n Stepsize that do fit are {}'.format(possible))
+        print('\n Will shorten the \'subyear\', so that it the temporal'
+              'frequency fits in one year')
+        xarray, datetime = timeseries_tofit_bins(xarray, ex)
+        one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
+          
+    else:
+        pass
+    fit_steps_yr = (one_yr.size)  / ex['tfreq']
+    bins = list(np.repeat(np.arange(0, fit_steps_yr), ex['tfreq']))
+    n_years = (datetime.year[-1] - datetime.year[0]) + 1
+    for y in np.arange(1, n_years):
+        x = np.repeat(np.arange(0, fit_steps_yr), ex['tfreq'])
+        x = x + fit_steps_yr * y
+        [bins.append(i) for i in x]
+    label_bins = xr.DataArray(bins, [xarray.coords['time'][:]], name='time')
+    label_dates = xr.DataArray(xarray.time.values, [xarray.coords['time'][:]], name='time')
+    xarray['bins'] = label_bins
+    xarray['time_dates'] = label_dates
+    xarray = xarray.set_index(time=['bins','time_dates'])
+    
+    half_step = ex['tfreq']/2.
+    newidx = np.arange(half_step, datetime.size, ex['tfreq'], dtype=int)
+    newdate = label_dates[newidx]
+    
+
+    group_bins = xarray.groupby('bins').mean(dim='time', keep_attrs=True)
+    group_bins['bins'] = newdate.values
+    dates = pd.to_datetime(newdate.values)
+    return group_bins.rename({'bins' : 'time'}), dates
+
+def expand_times_for_lags(datetime, ex):
+    expanded_time = []
+    for yr in set(datetime.year):
+        one_yr = datetime.where(datetime.year == yr).dropna(how='any')
+        start_mcK = one_yr[0]
+        #start day shifted half a time step
+        half_step = ex['tfreq']/2.
+#        origshift = np.arange(half_step, datetime.size, ex['tfreq'], dtype=int)
+        start_mcK = start_mcK - np.timedelta64(int(half_step+0.49), 'D')
+        last_day = '{}{}'.format(yr, ex['senddate'][4:])
+        end_mcK   = pd.to_datetime(last_day)
+#        adj_year = pd.DatetimeIndex(start=start_mcK, end=end_mcK, 
+#                                    freq=(datetime[1] - datetime[0]), 
+#                                    closed = None).values
+        steps = len(one_yr)
+        shift_start = start_mcK - (steps) * np.timedelta64(ex['tfreq'], 'D')
+        adj_year = pd.DatetimeIndex(start=shift_start, end=end_mcK, 
+                                    freq=pd.Timedelta( '1 days'), 
+                                    closed = None).values
+        [expanded_time.append(date) for date in adj_year]
+    
+    return pd.to_datetime(expanded_time)
+
+def make_datestr(dates, ex):
+    start_yr = pd.DatetimeIndex(start=ex['sstartdate'], end=ex['senddate'], 
+                                freq=(dates[1] - dates[0]))
+    breakyr = dates.year.max()
+    datesstr = [str(date).split('.', 1)[0] for date in start_yr.values]
+    nyears = (dates.year[-1] - dates.year[0])+1
+    startday = start_yr[0].strftime('%Y-%m-%dT%H:%M:%S')
+    endday = start_yr[-1].strftime('%Y-%m-%dT%H:%M:%S')
+    firstyear = startday[:4]
+    def plusyearnoleap(curr_yr, startday, endday, incr):
+        startday = startday.replace(firstyear, str(curr_yr+incr))
+        endday = endday.replace(firstyear, str(curr_yr+incr))
+        next_yr = pd.DatetimeIndex(start=startday, end=endday, 
+                        freq=(dates[1] - dates[0]))
+        # excluding leap year again
+        noleapdays = (((next_yr.month==2) & (next_yr.day==29))==False)
+        next_yr = next_yr[noleapdays].dropna(how='all')
+        return next_yr
+    
+
+    for yr in range(0,nyears-1):
+        curr_yr = yr+dates.year[0]
+        next_yr = plusyearnoleap(curr_yr, startday, endday, 1)
+        nextstr = [str(date).split('.', 1)[0] for date in next_yr.values]
+        datesstr = datesstr + nextstr
+
+        if next_yr.year[0] == breakyr:
+            break
+    datesmcK = pd.to_datetime(datesstr)
+    return datesmcK
+
+def import_array(filename, ex):
+    file_path = os.path.join(ex['path_pp'], filename)        
+    ncdf = xr.open_dataset(file_path, decode_cf=True, decode_coords=True, decode_times=False)
+    variables = list(ncdf.variables.keys())
+    strvars = [' {} '.format(var) for var in variables]
+    var = [var for var in strvars if var not in ' time time_bnds longitude latitude '][0] 
+    marray = np.squeeze(ncdf.to_array(file_path).rename(({file_path: var})))
+    numtime = marray['time']
+    dates = num2date(numtime, units=numtime.units, calendar=numtime.attrs['calendar'])
+    dates = pd.to_datetime(dates)
+#    print('temporal frequency \'dt\' is: \n{}'.format(dates[1]- dates[0]))
+    marray['time'] = dates
+    return marray
+
+def save_figure(data, path):
+    import os
+    import matplotlib.pyplot as plt
+#    if 'path' in locals():
+#        pass
+#    else:
+#        path = '/Users/semvijverberg/Downloads'
+    if path == 'default':
+        path = '/Users/semvijverberg/Downloads'
+    else:
+        path = path
+    import datetime
+    today = datetime.datetime.today().strftime("%d-%m-%y_%H'%M")
+    if type(data.name) is not type(None):
+        name = data.name.replace(' ', '_')
+    if 'name' in locals():
+        print('input name is: {}'.format(name))
+        name = name + '.jpeg'
+        pass
+    else:
+        name = 'fig_' + today + '.jpeg'
+    print(('{} to path {}'.format(name, path)))
+    plt.savefig(os.path.join(path,name), format='jpeg', dpi=300, bbox_inches='tight')
+    
+def area_weighted(xarray):
+    # Area weighted     
+    coslat = np.cos(np.deg2rad(xarray.coords['latitude'].values)).clip(0., 1.)
+    area_weights = np.tile(np.sqrt(coslat)[..., np.newaxis],(1,xarray.longitude.size))
+    xarray.values = xarray.values * area_weights 
+    return xarray
+    
+def convert_longitude(data):
+    import numpy as np
+    import xarray as xr
+    lon_above = data.longitude[np.where(data.longitude > 180)[0]]
+    lon_normal = data.longitude[np.where(data.longitude <= 180)[0]]
+    # roll all values to the right for len(lon_above amount of steps)
+    data = data.roll(longitude=len(lon_above))
+    # adapt longitude values above 180 to negative values
+    substract = lambda x, y: (x - y)
+    lon_above = xr.apply_ufunc(substract, lon_above, 360)
+    if lon_normal[0] == 0.:
+        convert_lon = xr.concat([lon_above, lon_normal], dim='longitude')
+    else:
+        convert_lon = xr.concat([lon_normal, lon_above], dim='longitude')
+    data['longitude'] = convert_lon
+    return data
+
+
+def rolling_mean_xr(xarray, win):
+    closed = int(win/2)
+    flatarray = xarray.values.flatten()
+    ext_array = np.insert(flatarray, 0, flatarray[-closed:])
+    ext_array = np.insert(ext_array, 0, flatarray[:closed])
+    
+    df = pd.DataFrame(ext_array)
+    std = xarray.where(xarray.values!=0.).std().values
+#    scipy.signal.gaussian(win, std)
+    rollmean = df.rolling(win, center=True, 
+                          win_type='gaussian').mean(std=std).dropna()
+    
+    # replace values with smoothened values
+    new_xarray = xarray.copy()
+    new_values = np.reshape(rollmean.squeeze().values, xarray.shape)
+    # ensure LSM mask
+    mask = np.array((xarray.values!=0.),dtype=int)
+    new_xarray.values = (new_values * mask)
+
+    return new_xarray
+
+def to_datesmcK(datesmcK, to_hour, from_hour):
+    dt_hours = to_hour + from_hour
+    matchdaysmcK = datesmcK + pd.Timedelta(int(dt_hours), unit='h')
+    return xr.DataArray(matchdaysmcK, dims=['time'])
+
+
+def find_region(data, region='Mckinnonplot'):
+    if region == 'Mckinnonplot':
+        west_lon = -240; east_lon = -40; south_lat = -10; north_lat = 80
+
+    elif region ==  'U.S.':
+        west_lon = -120; east_lon = -70; south_lat = 20; north_lat = 50
+    elif region ==  'U.S.cluster':
+        west_lon = -100; east_lon = -70; south_lat = 20; north_lat = 50
+    elif region ==  'PEPrectangle':
+        west_lon = -215; east_lon = -125; south_lat = 19; north_lat = 50
+    elif region ==  'Pacific':
+        west_lon = -215; east_lon = -120; south_lat = 19; north_lat = 60
+    elif region ==  'Whole':
+        west_lon = -360; east_lon = -1; south_lat = -80; north_lat = 80
+    elif region ==  'Northern':
+        west_lon = -360; east_lon = -1; south_lat = -10; north_lat = 80
+    elif region ==  'Southern':
+        west_lon = -360; east_lon = -1; south_lat = -80; north_lat = 10
+
+    region_coords = [west_lon, east_lon, south_lat, north_lat]
+    import numpy as np
+    def find_nearest(array, value):
+        idx = (np.abs(array - value)).argmin()
+        return int(idx)
+#    if data.longitude.values[-1] > 180:
+#        all_values = data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360+east_lon))
+#        lon_idx = np.arange(find_nearest(data['longitude'], 360 + west_lon), find_nearest(data['longitude'], 360+east_lon))
+#        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
+        
+    if west_lon <0 and east_lon > 0:
+        # left_of_meridional = np.array(data.sel(latitude=slice(north_lat, south_lat), longitude=slice(0, east_lon)))
+        # right_of_meridional = np.array(data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360)))
+        # all_values = np.concatenate((np.reshape(left_of_meridional, (np.size(left_of_meridional))), np.reshape(right_of_meridional, np.size(right_of_meridional))))
+        lon_idx = np.concatenate(( np.arange(find_nearest(data['longitude'], 360 + west_lon), len(data['longitude'])),
+                              np.arange(0,find_nearest(data['longitude'], east_lon), 1) ))
+        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
+        all_values = data.sel(latitude=slice(north_lat, south_lat), 
+                              longitude=(data.longitude > 360 + west_lon) | (data.longitude < east_lon))
+    if west_lon < 0 and east_lon < 0:
+        all_values = data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360+east_lon))
+        lon_idx = np.arange(find_nearest(data['longitude'], 360 + west_lon), find_nearest(data['longitude'], 360+east_lon))
+        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
+
+    return all_values, region_coords
+
+
 def cross_correlation_patterns(full_timeserie, pattern):
 #    full_timeserie = precursor
 #    pattern = pattern_atlag
@@ -1015,6 +1078,54 @@ def cross_correlation_patterns(full_timeserie, pattern):
     corrself -= corrself.mean(dim='time')
     return corrself
 
+# =============================================================================
+# =============================================================================
+# Plotting functions
+# =============================================================================
+# =============================================================================
+def xarray_plot(data, path='default', name = 'default', saving=False):
+    # from plotting import save_figure
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
+    import numpy as np
+#    original
+    plt.figure()
+    if len(data.longitude[np.where(data.longitude > 180)[0]]) != 0:
+        if data.longitude.where(data.longitude==0).dropna(dim='longitude', how='all') == 0.:
+            print('hoi')   
+            data = convert_longitude(data)
+    else:
+        pass
+    if data.ndim != 2:
+        print("number of dimension is {}, printing first element of first dimension".format(np.squeeze(data).ndim))
+        data = data[0]
+    else:
+        pass
+    if 'mask' in list(data.coords.keys()):
+        cen_lon = data.where(data.mask==True, drop=True).longitude.mean()
+        data = data.where(data.mask==True, drop=True)
+    else:
+        cen_lon = data.longitude.mean().values
+    proj = ccrs.PlateCarree(central_longitude=cen_lon)
+    ax = plt.axes(projection=proj)
+    ax.coastlines()
+    vmin = np.round(float(data.min())-0.01,decimals=2) 
+    vmax = np.round(float(data.max())+0.01,decimals=2) 
+    vmin = -max(abs(vmin),vmax) ; vmax = max(abs(vmin),vmax)
+    # ax.set_global()
+    if 'mask' in list(data.coords.keys()):
+        plot = data.copy().where(data.mask==True).plot.pcolormesh(ax=ax, cmap=plt.cm.RdBu_r,
+                             transform=ccrs.PlateCarree(), add_colorbar=True,
+                             vmin=vmin, vmax=vmax)
+    else:
+        plot = data.plot.pcolormesh(ax=ax, cmap=plt.cm.RdBu_r,
+                             transform=ccrs.PlateCarree(), add_colorbar=True,
+                             vmin=vmin, vmax=vmax)
+    if saving == True:
+        save_figure(data, path=path)
+    plt.show()
+    
+    
 def plot_events_validation(pred1, pred2, obs, pt1, pt2, othreshold, test_year=None):
     #%%
 #    pred1 = crosscorr_Sem
@@ -1092,74 +1203,96 @@ def plot_events_validation(pred1, pred2, obs, pt1, pt2, othreshold, test_year=No
         ax3.axvline(x=pd.to_datetime(days), color='green', alpha=1.)
     ax3.legend()
 
-def rand_traintest(RV_ts, Prec_reg, ex):
-    all_years = np.arange(ex['startyear'], ex['endyear']+1)
+
+def plot_oneyr_events(xarray, threshold, test_year):
+    testyear = xarray.where(xarray.time.dt.year == test_year).dropna(dim='time', how='any')
+    freq = pd.Timedelta(testyear.time.values[1] - testyear.time.values[0])
+    plotpaper = xarray.sel(time=pd.DatetimeIndex(start=testyear.time.values[0], 
+                                                end=testyear.time.values[-1], 
+                                                freq=freq ))
+    #plotpaper = mcKtsfull.sel(time=pd.DatetimeIndex(start='2012-06-23', end='2012-08-21', 
+    #                                freq=(datesmcK[1] - datesmcK[0])))
+    eventdays = plotpaper.where( plotpaper.values > threshold) 
+    eventdays = eventdays.dropna(how='all', dim='time').time
+    plt.figure()
+    plotpaper.plot()
+    plt.axhline(y=threshold)
+    for days in eventdays.time.values:
+        plt.axvline(x=days)
+
+def plotting_wrapper(plotarr, filename, ex, kwrgs=None):
+#    map_proj = ccrs.Miller(central_longitude=240)  
     
-    # conditions failed initally assumed True
-    a_conditions_failed = True
-    while a_conditions_failed == True:
-        
-        a_conditions_failed = False
-        # Divide into random sampled 25 year for train & rest for test
-    #        n_years_sampled = int((ex['endyear'] - ex['startyear']+1)*0.66)
-        if ex['method'] == 'random':
-            rand_test_years = np.random.choice(all_years, ex['leave_n_years_out'], replace=False)
-        elif ex['method'] == 'iter':
-            ex['leave_n_years_out'] = 1
-            rand_test_years = [all_years[ex['n']]]
-            
+    file_name = os.path.join(ex['figpathbase'], filename)
+    if os.path.isdir(file_name) != True : 
+        os.makedirs(file_name)
+    if kwrgs == None:
+        kwrgs = dict( {'title' : plotarr.name, 'clevels' : 'notdefault', 'steps':17,
+                        'vmin' : -3*plotarr.std().values, 'vmax' : 3*plotarr.std().values, 
+                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
+    else:
+        kwrgs = kwrgs
+        kwrgs['title'] = plotarr.attrs['title']
+    finalfigure(plotarr, file_name, kwrgs)
     
-            
-        # test duplicates
-        a_conditions_failed = (len(set(rand_test_years)) != ex['leave_n_years_out'])
-        # Update random years to be selected as test years:
-    #        initial_years = [yr for yr in initial_years if yr not in random_test_years]
-        rand_train_years = [yr for yr in all_years if yr not in rand_test_years]
+
+def finalfigure(xrdata, file_name, kwrgs):
+    #%%
+    map_proj = ccrs.Miller(central_longitude=240)  
+    lons = xrdata.longitude.values
+    lats = xrdata.latitude.values
+    strvars = [' {} '.format(var) for var in list(xrdata.dims)]
+    var = [var for var in strvars if var not in ' longitude latitude '][0] 
+    var = var.replace(' ', '')
+    g = xr.plot.FacetGrid(xrdata, col=var, col_wrap=kwrgs['column'], sharex=True,
+                      sharey=True, subplot_kws={'projection': map_proj},
+                      aspect= (xrdata.longitude.size) / xrdata.latitude.size, size=3)
+    figwidth = g.fig.get_figwidth() ; figheight = g.fig.get_figheight()
+
+
+    if kwrgs['clevels'] == 'default':
+        vmin = np.round(float(xrdata.min())-0.01,decimals=2) ; vmax = np.round(float(xrdata.max())+0.01,decimals=2)
+        clevels = np.linspace(-max(abs(vmin),vmax),max(abs(vmin),vmax),17) # choose uneven number for # steps
+    else:
+        vmin=kwrgs['vmin']
+        vmax=kwrgs['vmax']
+        clevels = np.linspace(vmin,vmax,kwrgs['steps'])
+    cmap = kwrgs['cmap']
+    
+    n_plots = xrdata[var].size
+    for n_ax in np.arange(0,n_plots):
+        ax = g.axes.flatten()[n_ax]
+#        print(n_ax)
+        plotdata = xrdata[n_ax]
+        im = plotdata.plot.contourf(ax=ax, cmap=cmap,
+                               transform=ccrs.PlateCarree(),
+                               subplot_kws={'projection': map_proj},
+                               levels=clevels, add_colorbar=False)
+        ax.coastlines(color='grey', alpha=0.3)
         
-    #            datesRV = pd.to_datetime(RV_ts.time.values)
-    #            matchdatesRV = to_datesmcK(datesRV, datesRV[0].hour, Prec_reg.time[0].dt.hour)
-    #            RV_dates = list(matchdatesRV.time.dt.year.values)
-        full_years  = list(Prec_reg.time.dt.year.values)
-        RV_years  = list(RV_ts.time.dt.year.values)
+        ax.set_extent([lons[0], lons[-1], lats[0], lats[-1]], ccrs.PlateCarree())
+#        lons = [-5.8, -5.8, -5.5, -5.5]
+#        lats = [50.27, 50.48, 50.48, 50.27]
+        lons_sq = [-215, -215, -125, -125]
+        lats_sq = [50, 19, 19, 50]
+        ring = LinearRing(list(zip(lons_sq , lats_sq )))
+        ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green')
+        if map_proj.proj4_params['proj'] in ['merc', 'Plat']:
+            print(True)
+            gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True)
+            gl.xlabels_top = False;
+    #        gl.xformatter = LONGITUDE_FORMATTER
+            gl.ylabels_right = False;
+            gl.xlabels_bottom = False
+    #        gl.yformatter = LATITUDE_FORMATTER
+        else:
+            pass
         
-    #            RV_dates_train_idx = [i for i in range(len(RV_dates)) if RV_dates[i] in rand_train_years]
-        Prec_train_idx = [i for i in range(len(full_years)) if full_years[i] in rand_train_years]
-        RV_train_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_train_years]
-        
-    #            RV_dates_test_idx = [i for i in range(len(RV_dates)) if RV_dates[i] in rand_test_years]
-        Prec_test_idx = [i for i in range(len(full_years)) if full_years[i] in rand_test_years]
-        RV_test_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_test_years]
-        
-        
-    #            dates_train = matchdatesRV.isel(time=RV_dates_train_idx)
-        Prec_train = Prec_reg.isel(time=Prec_train_idx)
-        RV_train = RV_ts.isel(time=RV_train_idx)
-        
-    #    if len(RV_dates_test_idx) 
-    #            dates_test = matchdatesRV.isel(time=RV_dates_test_idx)
-        Prec_test = Prec_reg.isel(time=Prec_test_idx)
-        RV_test = RV_ts.isel(time=RV_test_idx)
-        
-        event_train = Ev_timeseries(RV_train, ex['hotdaythres']).time
-        event_test = Ev_timeseries(RV_test, ex['hotdaythres']).time
-        
-        test_years = [yr for yr in list(set(RV_years)) if yr in rand_test_years]
-        
-        ave_events_pyr = (len(event_train) + len(event_test))/len(all_years)
-        exp_events     = int(ave_events_pyr) * len(rand_test_years)
-        tolerance      = 0.2 * exp_events
-        diff           = abs(len(event_test) - exp_events)
-        
-        print('test year is {}, with {} events'.format(test_years, len(event_test)))
-        if diff > tolerance and ex['method']=='random': 
-            print('not a representative sample, drawing new sample')
-            a_conditions_failed = True
-                   
-        
-        train = dict( {    'Prec'  : Prec_train,
-                           'RV'    : RV_train,
-                           'events' : event_train})
-        test = dict( {     'Prec'  : Prec_test,
-                           'RV'    : RV_test,
-                           'events' : event_test})
-    return train, test, test_years
+    g.fig.text(0.5, 0.95, kwrgs['title'], fontsize=15, horizontalalignment='center')
+    cbar_ax = g.fig.add_axes([0.25, (figheight/25)/n_plots, 
+                                  0.5, (figheight/25)/n_plots])
+    plt.colorbar(im, cax=cbar_ax, orientation='horizontal', 
+                 label=xrdata.attrs['units'], extend='neither')
+    g.fig.savefig(file_name ,dpi=250)
+    #%%
+    return
