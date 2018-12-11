@@ -39,25 +39,28 @@ if os.path.isdir(path_pp) == False: os.makedirs(path_pp)
 
 ex = dict(
      {'grid_res'     :       2.5,
-     'startyear'    :       1982,
-     'endyear'      :       2015,
+     'startyear'    :       1979,
+     'endyear'      :       2017,
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'sstartdate'   :       '1982-06-24',
-     'senddate'     :       '1982-08-21',
+     'sstartdate'   :       '1982-06-01', #'1982-06-24',
+     'senddate'     :       '1982-08-31', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'tfreq'        :       1,
-     'RV_name'      :       'T95',
-     'name'         :       'sst_NOAA',
-     'wghts_std_anom':      False,
+     'RV_name'      :       'T2mmax',
+     'name'         :       'sst',
+     'leave_n_out'  :       True,
+     'method'       :       'iter',
+     'ROC_leave_n_out':     False,
+     'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False}
      )
 
-
-ex_dic_path = "T95_sst_NOAA_default_settings.npy"
-ex = np.load(ex_dic_path, encoding='latin1').item()
+#
+#ex_dic_path = "T95_sst_NOAA_default_settings.npy"
+#ex = np.load(ex_dic_path, encoding='latin1').item()
 
 ex['figpathbase'] = os.path.join(ex['figpathbase'], '{}_{}'.format(
         ex['RV_name'], ex['name']))
@@ -101,14 +104,13 @@ Prec_reg, datesvar = func_mcK.time_mean_bins(Prec_reg, ex)
 
 # binary time serie when T95 exceeds 1 std
 ex['hotdaythres'] = RV_ts.mean(dim='time').values + RV_ts.std().values
+ex['hotdaythres'] = np.percentile(RV_ts.values, 80)
 # If method == 'random' - Run until ROC has converged
-ex['leave_n_out'] = True ; ex['method'] = 'iter'
-ex['ROC_leave_n_out'] = False
 
 
 #ex['lags_idx'] = [12, 18, 24, 30]  
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
-ex['lags'] = [6, 12, 18, 24]  
+ex['lags'] = [0, 6, 12, 18]  
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
@@ -119,34 +121,41 @@ if ex['leave_n_out'] == True and ex['method'] == 'iter':
     ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
     ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
     ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
-ex['score_per_run'] = []
+
 
 ## plotting same figure as in paper
-#func_mcK.plot_oneyr_events(RV_ts, ex['hotdaythres'], 2012)
+func_mcK.plot_oneyr_events(RV_ts, ex['hotdaythres'], 2012)
 
-    
 
 print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear', 
-            'sstartdate', 'senddate', 'n_conv', 'wghts_std_anom', 
+            'sstartdate', 'senddate', 'n_conv', 'leave_n_out',
+            'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
-            'n_std', 'tfreq', 'lags', 'n_yrs']
+            'n_std', 'tfreq', 'lags', 'n_yrs', 'hotdaythres']
+
+max_key_len = max([len(i) for i in print_ex])
 for key in print_ex:
-    print('\'{}\'\t\t{}'.format(key, ex[key]))
+    key_len = len(key)
+    expand = max_key_len - key_len
+    key_exp = key + ' ' * expand
+    print('\'{}\'\t\t{}'.format(key_exp, ex[key]))
 
     
 #np.save(os.path.join(script_dir, '{}_{}_default_settings.npy'.format(
 #        ex['RV_name'], ex['name'])), ex)
 
 #%% Run code with ex settings
+#ex['n_conv'] = 3
 def main(RV_ts, Prec_reg, ex):
-    
+    ex['score_per_run'] = []
+    if ex['leave_n_out'] == False : ex['n_conv'] = 1
     # Purely train-test based on iterating over all years:
     lats = Prec_reg.latitude
     lons = Prec_reg.longitude
     array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
     patterns = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
                           dims=['n_tests', 'lag','latitude','longitude'], 
-                          name='{}_tests_patterns'.format(ex['n_conv']+1), attrs={'units':'Kelvin'})
+                          name='{}_tests_patterns'.format(ex['n_conv']), attrs={'units':'Kelvin'})
     
     for n in range(ex['n_conv']):
         ex['n'] = n
@@ -157,29 +166,73 @@ def main(RV_ts, Prec_reg, ex):
         # =============================================================================
         test, train, ds_mcK, ds_Sem, ex = func_mcK.find_precursor(RV_ts, Prec_reg, ex)
     
-        
         # =============================================================================
         # Calculate ROC score
         # =============================================================================
-        ex['score_per_run'] = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
+        ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
         l_ds_Sem       = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
         patterns[n,:,:,:] = l_ds_Sem[n]['pattern']
         
+        
         ex['n'] += 1
+        if ex['leave_n_out'] == False:
+            # only need single run
+            break
     return ex, patterns
 
         
-score_per_run, patterns = main(RV_ts, Prec_reg, ex)
+ex, patterns = main(RV_ts, Prec_reg, ex)
 
 events_per_year = [ex['score_per_run'][i][1] for i in range(len(ex['score_per_run']))]
-l_ds_mcK       = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-l_ds_Sem       = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
-ran_ROCS       = [ex['score_per_run'][i][4] for i in range(len(ex['score_per_run']))]
+l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+l_ds_Sem        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
+ran_ROCS        = [ex['score_per_run'][i][4] for i in range(len(ex['score_per_run']))]
+score_mcK       = np.round(ex['score_per_run'][-1][2]['score'], 2)
+score_Sem       = np.round(ex['score_per_run'][-1][3]['score'], 2)
+
 
 mean_n_patterns = patterns.mean(dim='n_tests')
-mean_n_patterns.attrs['units'] = 'weighted pattern over {} runs'.format(ex['n_conv']+1)
-filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']+1) )
+mean_n_patterns.attrs['units'] = 'mean over {} runs'.format(ex['n_conv'])
+mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
+filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']) )
 func_mcK.plotting_wrapper(mean_n_patterns, filename, ex)
+
+#%% Counting times gridcells were extracted
+if ex['leave_n_out']:
+    n_lags = patterns.sel(n_tests=0).lag.size
+    n_lats = patterns.sel(n_tests=0).latitude.size
+    n_lons = patterns.sel(n_tests=0).longitude.size
+    
+    pers_patt = patterns.sel(n_tests=0).copy()
+    arrpatt = np.nan_to_num(patterns.values)
+    mask_patt = (arrpatt != 0)
+    arrpatt[mask_patt] = 1
+    wghts = np.zeros( (n_lags, n_lats, n_lons) )
+    #plt.imshow(arrpatt[0,0]) ; plt.colorbar()
+    for l in ex['lags']:
+        i = ex['lags'].index(l)
+        wghts[i] = np.sum(arrpatt[:,i,:,:], axis=0)
+    pers_patt.values = wghts
+    
+    pers_patt.attrs['units'] = 'persistence pattern over {} runs'.format(ex['n_conv'])
+    pers_patt.attrs['title'] = 'ROC {}'.format(score_Sem.values)
+    filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']) )
+    kwrgs = dict( {'title' : pers_patt.name, 'clevels' : 'notdefault', 'steps':17,
+                    'vmin' : pers_patt.min().values, 'vmax' : pers_patt.max().values, 
+                   'cmap' : plt.cm.gist_heat_r, 'column' : 2} )
+    func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
+#%% Only keep gridcells that were extracted every run
+if ex['leave_n_out']:
+    pers_patt_filter = patterns.sel(n_tests=0).copy()
+    ex['persistence_criteria'] = len(set(RV_ts.time.dt.year.values))
+    mask_pers = (wghts == ex['persistence_criteria'])
+    mean_n_patterns = patterns.mean(dim='n_tests')
+    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
+    #pers_patt_filter = mask_pers * patterns.mean(dim='n_tests')
+    pers_patt_filter.attrs['units'] = 'weighted by persistence of pattern over {} runs'.format(ex['n_conv'])
+    pers_patt_filter.name = 'ROC {}'.format(score_Sem.values)
+    func_mcK.plotting_wrapper(pers_patt_filter, filename, ex, kwrgs=None)
+
 #%%
         
         

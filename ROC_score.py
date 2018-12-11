@@ -37,9 +37,11 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                                                             ds_mcK['pattern'].sel(lag=lag))
         crosscorr_Sem = func_mcK.cross_correlation_patterns(var_test_reg, 
                                                             ds_Sem['pattern'].sel(lag=lag))
+#        if idx == 0:
+#            print(ex['test_years'])
+#            print(crosscorr_Sem.time)
         
-        
-        if ex['method'] == 'iter':
+        if ex['leave_n_out'] == True and ex['method'] == 'iter':
             if ex['n'] == 0:
                 ex['test_ts_mcK'][idx] = crosscorr_mcK.values 
                 ex['test_ts_Sem'][idx] = crosscorr_Sem.values
@@ -49,12 +51,15 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     #                update_ROCS = ex['test_ts_mcK'][idx].append(list(crosscorr_mcK.values))
                 ex['test_ts_mcK'][idx] = np.concatenate( [ex['test_ts_mcK'][idx], crosscorr_mcK.values] )
                 ex['test_ts_Sem'][idx] = np.concatenate( [ex['test_ts_Sem'][idx], crosscorr_Sem.values] )
-                ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )
-    #                ex['test_RV_Sem'][idx] = np.concatenate( [ex['test_RV_Sem'][idx], var_test_reg.values] )
-    #            print(len(ex['test_ts_Sem']))
+                ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )             
         
             if  ex['n'] == ex['n_conv']-1:
-                n_boot = 5
+                if idx == 0:
+                    print('Calculating ROC scores\nDatapoints precursor length '
+                      '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),
+                       len(ex['test_RV'][0])))
+                
+                n_boot = 10
                 ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, n_boot, 'default')
                 ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
@@ -64,15 +69,12 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
             
                 
-        elif ex['method'] == 'random':        
+        elif ex['leave_n_out'] == True and ex['method'] == 'random' :        
                                
             # check detection of precursor:
             Prec_threshold_mcK = ds_mcK['perc'].sel(percentile=60 /10).values[0]
             Prec_threshold_Sem = ds_Sem['perc'].sel(percentile=60 /10).values[0]
             
-            # =============================================================================
-            # Determine events in time series
-            # =============================================================================
             # check if there are any detections
             Prec_det_mcK = (func_mcK.Ev_timeseries(crosscorr_mcK, 
                                            Prec_threshold_mcK).size > ex['min_detection'])
@@ -83,13 +85,10 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     #        func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, RV_ts_test, Prec_threshold_Sem, 
     #                                        Prec_threshold_mcK, ex['hotdaythres'], test_years[0])
     
-    
             if Prec_det_mcK == True:
                 n_boot = 1
                 ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
                                       ex['hotdaythres'], lag, n_boot, ds_mcK['perc'])
-    
-    
             else:
                 print('Not enough predictions detected, neglecting this predictions')
                 ROC_mcK[idx] = ROC_boot = 0.5
@@ -100,9 +99,6 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                 n_boot = 0
                 ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
                                       ex['hotdaythres'], lag, n_boot, ds_Sem['perc'])[0]
-    #            ROC_std = 2 * np.std([ROC_boot_Sem, ROC_boot_mcK])
-                
-    #                Sem_ROCS.append(commun_comp.sel(lag=lag))
             else:
                 print('Not enough predictions detected, neglecting this predictions')
                 ROC_Sem = ROC_boot = 0.5
@@ -111,17 +107,29 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
             print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
+            
+        elif ex['leave_n_out'] == False:
+            if idx == 0:
+                print('performing hindcast')
+            n_boot = 5
+            ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
+                                   ex['hotdaythres'], lag, n_boot, 'default')
+            ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
+                                      ex['hotdaythres'], lag, 0, ds_Sem['perc'])[0]
+            print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+                '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
+                  lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
         
-        # store output:
-        ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
-                          dims=['lag'], name='score_diff_lags',
-                          attrs={'units':'-'})
-        ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
-                          dims=['lag'], name='score_diff_lags',
-                          attrs={'units':'-'})
+    # store output:
+    ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
+                      dims=['lag'], name='score_diff_lags',
+                      attrs={'units':'-'})
+    ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
+                      dims=['lag'], name='score_diff_lags',
+                      attrs={'units':'-'})
     
     ex['score_per_run'].append([ex['test_years'], len(test['events']), ds_mcK, ds_Sem, ROC_boot])
-    return ex['score_per_run']
+    return ex
 
 def ROC_score(predictions, observed, thr_event, lag, n_boot, thr_pred='default'):
     

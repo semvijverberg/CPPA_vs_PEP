@@ -37,15 +37,16 @@ ex = dict(
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'sstartdate'   :       '1982-06-01',
-     'senddate'     :       '1982-08-31',
+     'sstartdate'   :       '1982-06-24',
+     'senddate'     :       '1982-08-21',
      'map_proj'     :       map_proj,
      'figpathbase'     :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'tfreq'        :       1,
      'RV_name'      :       'T95',
      'name'         :       'sst_NOAA',
-     'wghts_accross_lags'   : True,
-     'wgths_std_anom'       : True}
+     'wghts_accross_lags':  False,
+     'wghts_std_anom':      False,
+     'splittrainfeat':      False}
      )
 
 if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
@@ -112,18 +113,18 @@ func_mcK.plot_oneyr_events(mcKts, hotdaythreshold, 2012)
 ex['leave_n_out'] = True ; ex['method'] = 'iter'
 
 ex['ROC_leave_n_out'] = False
-ex['leave_n_years_out'] = 5
+ex['leave_n_years_out'] = 1
 
 
 ex['score_per_run'] = []
 
-ex['lags'] = [6, 10]  
+ex['lags'] = [0, 6]  
 ex['min_detection'] = 5
 ex['hotdaythres'] = hotdaythreshold
 ex['n_strongest'] = 15 
 ex['n_std'] = 1.5   
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
-ex['n_conv'] = 1 #ex['n_yrs'] -1 
+ex['n_conv'] = 2 #ex['n_yrs'] 
 ex['toler'] = 0.010
 if ex['leave_n_out'] == True and ex['method'] == 'iter':
     ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
@@ -132,7 +133,7 @@ if ex['leave_n_out'] == True and ex['method'] == 'iter':
 Convergence = False ; Conv_mcK = False ; Conv_Sem = False
 
 
-#%%
+
 # Purely train-test based on iterating over all years:
     
 lats = Prec_reg.latitude
@@ -157,7 +158,7 @@ for n in range(ex['n_conv']):
     # =============================================================================
     # Calculate ROC score
     # =============================================================================
-    ex['score_per_run'] = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
+    ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
     
     
     score_per_run = ex['score_per_run']
@@ -172,7 +173,9 @@ for n in range(ex['n_conv']):
     
     
     
-    
+#%%
+
+   
 ##%% Run code with ex settings
 #if __name__ == "__main__":
 #    for n in range(ex['n_conv']):
