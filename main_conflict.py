@@ -44,14 +44,14 @@ ex = dict(
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'sstartdate'   :       '06-01', #'1982-06-24',
-     'senddate'     :       '08-31', #'1982-08-22',
+     'sstartdate'   :       '1982-06-01', #'1982-06-24',
+     'senddate'     :       '1982-08-31', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_compAggljacc_tf14_n8__to_z.npy",
-     'tfreq'        :       3,
+     'tfreq'        :       1,
      'load_mcK'     :       False,
-     'RV_name'      :       'z',
+     'RV_name'      :       'T2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'method'       :       'iter',
@@ -61,10 +61,7 @@ ex = dict(
      'splittrainfeat':      False}
      )
 
-ex['sstartdate'] = str(ex['startyear']) + '-' + ex['sstartdate']
-ex['senddate'] = str(ex['startyear']) + '-' + ex['senddate']
-
-
+#
 #ex_dic_path = "T95_sst_NOAA_default_settings.npy"
 #ex = np.load(ex_dic_path, encoding='latin1').item()
 
@@ -82,32 +79,22 @@ print(ex['region'])
 
 if ex['load_mcK'] == True:
     # Load in mckinnon Time series
-    
     T95name = 'PEP-T95TimeSeries.txt'
-    RVtsfull, datesmcK = func_mcK.read_T95(T95name, ex)
-    datesRV = func_mcK.make_datestr(datesmcK, ex)
+    mcKtsfull, datesmcK = func_mcK.read_T95(T95name, ex)
+    datesmcK_daily = func_mcK.make_datestr(datesmcK, ex)
 else:
-    ex['sstartdate'] = ex['sstartdate'].replace(ex['sstartdate'][:4], 
-      str(ex['startyear']) )
-    ex['senddate'] = ex['senddate'].replace(ex['senddate'][:4], 
-      str(ex['startyear']) )
     print('\nimportRV_1dts is true, so the 1D time serie given with name {}\n'
-              '{} is imported.'.format(ex['RV_name'],ex['RVts_filename']))
+              ' {}\n is imported.'.format(ex['RV_name'],ex['RVts_filename']))
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
     dicRV = np.load(filename,  encoding='latin1').item()
-    RVtsfull = dicRV['RVfullts']
-    RVhour   = RVtsfull.time[0].dt.hour.values
-    datesRV = func_mcK.make_datestr(pd.to_datetime(RVtsfull.time.values), ex)
-    # add RVhour to daily dates
-    datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
+                       
 
 # Selected Time series of T95 ex['sstartdate'] until ex['senddate']
-RVts = RVtsfull.sel(time=datesRV)
+mcKts = mcKtsfull.sel(time=datesmcK_daily)
 
 # Load in external ncdf
 #filename = '{}_1979-2017_2mar_31aug_dt-1days_2.5deg.nc'.format(ex['name'])
-filename = '{}_{}-{}_2jan_31aug_dt-1days_2.5deg.nc'.format(ex['name'],
-            ex['startyear'], ex['endyear'])
+filename = '{}_1982-2017_2jan_31aug_dt-1days_2.5deg.nc'.format(ex['name'])
 # full globe - full time series
 varfullgl = func_mcK.import_array(filename, ex)
 
@@ -117,7 +104,7 @@ if ex['name']=='sst':
 
 
 
-RV_ts, datesmcK = func_mcK.time_mean_bins(RVts, ex)
+RV_ts, datesmcK = func_mcK.time_mean_bins(mcKts, ex)
 expanded_time = func_mcK.expand_times_for_lags(datesmcK, ex)
 # Converting Mckinnon timestemp to match xarray timestemp
 expandeddaysmcK = func_mcK.to_datesmcK(expanded_time, expanded_time[0].hour, varfullgl.time[0].dt.hour)
@@ -214,12 +201,6 @@ score_mcK       = np.round(ex['score_per_run'][-1][2]['score'], 2)
 score_Sem       = np.round(ex['score_per_run'][-1][3]['score'], 2)
 
 
-# mcKinnon plot
-filename = os.path.join(ex['exp_folder'], 'mcKinnon composite_tf{}_{}'.format(
-            ex['tfreq'], ex['lags']))
-func_mcK.plotting_wrapper(l_ds_mcK[0]['pattern'], filename, ex)
-
-# Sem plot
 mean_n_patterns = patterns.mean(dim='n_tests')
 mean_n_patterns.attrs['units'] = 'mean over {} runs'.format(ex['n_conv'])
 mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
@@ -252,7 +233,7 @@ if ex['leave_n_out']:
     func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
 #%% Only keep gridcells that were extracted every run
 if ex['leave_n_out']:
-    pers_patt_filter = patterns.sel(n_tests=0).copy().drop('n_tests')
+    pers_patt_filter = patterns.sel(n_tests=0).copy()
     ex['persistence_criteria'] = len(set(RV_ts.time.dt.year.values))
     mask_pers = (wghts == ex['persistence_criteria'])
     mean_n_patterns = patterns.mean(dim='n_tests')

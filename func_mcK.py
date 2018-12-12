@@ -858,7 +858,7 @@ def expand_times_for_lags(datetime, ex):
         half_step = ex['tfreq']/2.
 #        origshift = np.arange(half_step, datetime.size, ex['tfreq'], dtype=int)
         start_mcK = start_mcK - np.timedelta64(int(half_step+0.49), 'D')
-        last_day = '{}{}'.format(yr, ex['senddate'][4:])
+        last_day = '{}{} {}:00:00'.format(yr, ex['senddate'][4:], datetime[0].hour)
         end_mcK   = pd.to_datetime(last_day)
 #        adj_year = pd.DatetimeIndex(start=start_mcK, end=end_mcK, 
 #                                    freq=(datetime[1] - datetime[0]), 
@@ -988,7 +988,8 @@ def rolling_mean_xr(xarray, win):
     return new_xarray
 
 def to_datesmcK(datesmcK, to_hour, from_hour):
-    dt_hours = to_hour + from_hour
+    
+    dt_hours = from_hour - to_hour
     matchdaysmcK = datesmcK + pd.Timedelta(int(dt_hours), unit='h')
     return xr.DataArray(matchdaysmcK, dims=['time'])
 
