@@ -113,9 +113,10 @@ def find_precursor(RV_ts, Prec_reg, ex):
 # ============================================================================= 
    
     ds_Sem = extract_precursor(train, ex)   
+    
+    
     if ex['wghts_accross_lags'] == True:
         ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
-
 # =============================================================================
 # Force Leave_n_out validation even though pattern is based on whole dataset
 # =============================================================================
@@ -347,7 +348,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 
 
 def train_weights_LogReg(ts_regions_lag_i, binary_events):
-#    from sklearn.linear_model import LogisticRegression
+    from sklearn.linear_model import LogisticRegression
 #    from sklearn.model_selection import train_test_split
 #    X = np.swapaxes(ts_regions_lag_i, 1,0)
     X_train = ts_regions_lag_i
@@ -355,27 +356,28 @@ def train_weights_LogReg(ts_regions_lag_i, binary_events):
 #    X_train, X_test, y_train, y_test = train_test_split(
 #                                        X, y, test_size=0.33)
     
-#    Log_out = LogisticRegression(random_state=0, penalty = 'l2', solver='saga',
-#                       tol = 1E-9, multi_class='ovr').fit(X_train, y_train)
+    Log_reg = LogisticRegression(random_state=5, penalty = 'l2', solver='saga',
+                       tol = 1E-9, multi_class='ovr', max_iter=8000)
+    model = Log_reg.fit(X_train, y_train)
 #    print(Log_out.score(X_train, y_train))
 #    print(Log_out.score(X_test, y_test))
     
-    from sklearn.linear_model import LogisticRegressionCV
+#    from sklearn.linear_model import LogisticRegressionCV
 #    Log_out = LogisticRegressionCV(random_state=0, penalty = 'l2', solver='saga',
 #                       tol = 1E-9, multi_class='ovr', max_iter=8000,
 #                       n_jobs = -1 ).fit(
 #                               X_train, y_train)
 #    print(Log_out.score(X_train, y_train))
 
-    Log_out = LogisticRegressionCV(random_state=None, penalty = 'l2', solver='liblinear',
-                       tol = 1E-9, multi_class='ovr', max_iter=8000,
-                       n_jobs = -1, refit=True ).fit(
-                               X_train, y_train)
+#    Log_out = LogisticRegressionCV(random_state=None, penalty = 'l2', solver='liblinear',
+#                       tol = 1E-9, multi_class='ovr', max_iter=8000,
+#                       n_jobs = -1, refit=True ).fit(
+#                               X_train, y_train)
 #    print(Log_out.score(X_train, y_train))
 #    print(Log_out.score(X_test, y_test))
     
     
-    coeff_features = Log_out.coef_
+    coeff_features = model.coef_
     # predictions score of test 
     # score untrained:
 #    score_on_trained = Log_out.score(X_train, y_train)

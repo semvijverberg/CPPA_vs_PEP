@@ -49,7 +49,7 @@ ex = dict(
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc_tf14_n8__to_t2mmax.npy",
-     'tfreq'        :       1,
+     'tfreq'        :       3,
      'load_mcK'     :       False,
      'RV_name'      :       't2mmax',
      'name'         :       'sst',
