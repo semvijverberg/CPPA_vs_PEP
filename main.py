@@ -44,19 +44,19 @@ ex = dict(
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'sstartdate'   :       '06-01', #'1982-06-24',
-     'senddate'     :       '08-31', #'1982-08-22',
+     'sstartdate'   :       '06-24', #'1982-06-24',
+     'senddate'     :       '08-22', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
-     'RVts_filename':       "t2mmax_1979-2017_compAggljacc_tf14_n8__to_z.npy",
-     'tfreq'        :       3,
+     'RVts_filename':       "t2mmax_1979-2017_averAggljacc_tf14_n8__to_t2mmax.npy",
+     'tfreq'        :       1,
      'load_mcK'     :       False,
-     'RV_name'      :       'z',
+     'RV_name'      :       't2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'method'       :       'iter',
      'ROC_leave_n_out':     False,
-     'wghts_std_anom':      True,
+     'wghts_std_anom':      False,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False}
      )
@@ -66,7 +66,8 @@ ex['senddate'] = str(ex['startyear']) + '-' + ex['senddate']
 
 
 #ex_dic_path = "T95_sst_NOAA_default_settings.npy"
-#ex = np.load(ex_dic_path, encoding='latin1').item()
+ex_dic_path = "ERA_T2mmax_sst_default_settings.npy"
+ex = np.load(ex_dic_path, encoding='latin1').item()
 
 ex['figpathbase'] = os.path.join(ex['figpathbase'], '{}_{}'.format(
         ex['RV_name'], ex['name']))
@@ -82,17 +83,17 @@ print(ex['region'])
 
 if ex['load_mcK'] == True:
     # Load in mckinnon Time series
-    
     T95name = 'PEP-T95TimeSeries.txt'
     RVtsfull, datesmcK = func_mcK.read_T95(T95name, ex)
     datesRV = func_mcK.make_datestr(datesmcK, ex)
 else:
+    # load ERA-i Time series
     ex['sstartdate'] = ex['sstartdate'].replace(ex['sstartdate'][:4], 
       str(ex['startyear']) )
     ex['senddate'] = ex['senddate'].replace(ex['senddate'][:4], 
       str(ex['startyear']) )
-    print('\nimportRV_1dts is true, so the 1D time serie given with name {}\n'
-              '{} is imported.'.format(ex['RV_name'],ex['RVts_filename']))
+    print('\nimportRV_1dts is true, so the 1D time serie given with name \n'
+              '{} is imported.'.format(ex['RVts_filename']))
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
     dicRV = np.load(filename,  encoding='latin1').item()
     RVtsfull = dicRV['RVfullts']
@@ -164,8 +165,8 @@ for key in print_ex:
     print('\'{}\'\t\t{}'.format(key_exp, ex[key]))
 
     
-#np.save(os.path.join(script_dir, '{}_{}_default_settings.npy'.format(
-#        ex['RV_name'], ex['name'])), ex)
+##np.save(os.path.join(script_dir, 'ERA_{}_{}_default_settings.npy'.format(
+##        ex['RV_name'], ex['name'])), ex)
 
 #%% Run code with ex settings
 #ex['n_conv'] = 3
