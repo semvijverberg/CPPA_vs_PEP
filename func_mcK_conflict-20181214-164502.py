@@ -337,7 +337,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     
     coeff_features = train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts)
     # standardize coefficients
-#    coeff_features = (coeff_features - np.mean(coeff_features)) / np.std(coeff_features)
+    coeff_features = (coeff_features - np.mean(coeff_features)) / np.std(coeff_features)
     features = np.arange(xrnpmap.min(), xrnpmap.max() + 1 ) 
     weights = npmap.copy()
     for f in features:
@@ -364,13 +364,12 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events):
     # probability of the events. To ease interpretability I will multiple each ts
     # with the sign of the region, to that each params should be above one (higher
     # coef_, higher probability of events)
-    signs = sign_ts_regions
     X = ts_regions_lag_i
     y = binary_events
     
     not_all_regions_significant = True
     while not_all_regions_significant:
-        X_train = X * signs[None,:]
+        X_train = X * sign_ts_regions[None,:]
         y_train = y
 #        X_train = ts_regions_lag_i
 #        y_train = binary_events
@@ -382,7 +381,7 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events):
         model = Log_reg.fit(X_train, y_train)
         OR_SK = np.exp(model.coef_)
         print('SK logit Odds of event happening conditioned on X (p / (1+p) = exp(params) \n{}\n'.format(OR_SK))
-        print('SK logit score {}'.format(model.score(X_train,y_train)))
+        
         import statsmodels.api as sm
         logit_model=sm.Logit(y_train,X_train)
         result = logit_model.fit()
@@ -393,8 +392,8 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events):
         p_vals = result.pvalues
         regions_no_sign_fit = np.where(p_vals >= 0.05)[0]
         # update regions accounted for in fit
-        X = np.delete(X, regions_no_sign_fit, axis=1)
-        signs  = np.delete(signs, regions_no_sign_fit, axis=0)
+        ts_regions_lag_i = np.delete(ts_regions_lag_i, regions_no_sign_fit, axis=1)
+        sign_ts_regions  = np.delete(sign_ts_regions, regions_no_sign_fit, axis=0)
         if len(regions_no_sign_fit) == 0:
             not_all_regions_significant = False
     
