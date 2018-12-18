@@ -28,6 +28,7 @@ import cartopy.crs as ccrs
 xrplot = func_mcK.xarray_plot
 import matplotlib.pyplot as plt
 import scipy
+xarray_plot = func_mcK.xarray_plot
 
 base_path = "/Users/semvijverberg/surfdrive/Data_ERAint/"
 exp_folder = ''
@@ -49,25 +50,26 @@ ex = dict(
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc_tf14_n8__to_t2mmax.npy",
-     'tfreq'        :       3,
+     'tfreq'        :       2,
      'load_mcK'     :       False,
      'RV_name'      :       't2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'method'       :       'iter',
      'ROC_leave_n_out':     False,
-     'wghts_std_anom':      False,
+     'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
-     'splittrainfeat':      False}
+     'splittrainfeat':      False,
+     'pval_logit_first':       0.10,
+     'pval_logit_final':    0.01}
      )
-
 ex['sstartdate'] = str(ex['startyear']) + '-' + ex['sstartdate']
 ex['senddate'] = str(ex['startyear']) + '-' + ex['senddate']
 
 
-#ex_dic_path = "T95_sst_NOAA_default_settings.npy"
-ex_dic_path = "ERA_T2mmax_sst_default_settings.npy"
-ex = np.load(ex_dic_path, encoding='latin1').item()
+##ex_dic_path = "T95_sst_NOAA_default_settings.npy"
+#ex_dic_path = "ERA_T2mmax_sst_default_settings.npy"
+#ex = np.load(ex_dic_path, encoding='latin1').item()
 
 ex['figpathbase'] = os.path.join(ex['figpathbase'], '{}_{}'.format(
         ex['RV_name'], ex['name']))
@@ -97,6 +99,8 @@ else:
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
     dicRV = np.load(filename,  encoding='latin1').item()
     RVtsfull = dicRV['RVfullts']
+    ex['mask'] = dicRV['RV_array']['mask']
+    xarray_plot(dicRV['RV_array']['mask'])
     RVhour   = RVtsfull.time[0].dt.hour.values
     datesRV = func_mcK.make_datestr(pd.to_datetime(RVtsfull.time.values), ex)
     # add RVhour to daily dates
@@ -251,17 +255,28 @@ if ex['leave_n_out']:
                     'vmin' : pers_patt.min().values, 'vmax' : pers_patt.max().values, 
                    'cmap' : plt.cm.gist_heat_r, 'column' : 2} )
     func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
-#%% Only keep gridcells that were extracted every run
+#%% Weighing features if there are extracted every run (training set)¶
+# weighted by persistence of pattern over
 if ex['leave_n_out']:
-    pers_patt_filter = patterns.sel(n_tests=0).copy().drop('n_tests')
-    ex['persistence_criteria'] = len(set(RV_ts.time.dt.year.values))
-    mask_pers = (wghts == ex['persistence_criteria'])
-    mean_n_patterns = patterns.mean(dim='n_tests')
-    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
+    mean_n_patterns = patterns.mean(dim='n_tests') * wghts/np.max(wghts)
     #pers_patt_filter = mask_pers * patterns.mean(dim='n_tests')
-    pers_patt_filter.attrs['units'] = 'weighted by persistence of pattern over {} runs'.format(ex['n_conv'])
-    pers_patt_filter.name = 'ROC {}'.format(score_Sem.values)
-    func_mcK.plotting_wrapper(pers_patt_filter, filename, ex, kwrgs=None)
+    mean_n_patterns.attrs['units'] = 'weighted by persistence of pattern over {} runs'.format(ex['n_conv'])
+    mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
+    func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=None)
+
+
+## Only keep gridcells that were extracted every run
+#if ex['leave_n_out']:
+#    pers_patt_filter = patterns.sel(n_tests=0).copy().drop('n_tests')
+#    ex['persistence_criteria'] = len(set(RV_ts.time.dt.year.values))
+#    mask_pers = (wghts == ex['persistence_criteria'])
+#    mean_n_patterns = patterns.mean(dim='n_tests')
+#    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
+#    #pers_patt_filter = mask_pers * patterns.mean(dim='n_tests')
+#    pers_patt_filter.attrs['units'] = 'only gridcells present every year over {} runs'.format(ex['n_conv'])
+#    pers_patt_filter.name = 'ROC {}'.format(score_Sem.values)
+#    func_mcK.plotting_wrapper(pers_patt_filter, filename, ex, kwrgs=None)
+    
 
 #%%
         
