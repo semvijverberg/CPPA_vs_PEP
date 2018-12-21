@@ -45,14 +45,14 @@ ex = dict(
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'sstartdate'   :       '06-24', #'1982-06-24',
-     'senddate'     :       '08-22', #'1982-08-22',
+     'sstartdate'   :       '06-01', #'1982-06-24',
+     'senddate'     :       '08-31', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
-     'RVts_filename':       "t2mmax_1979-2017_averAggljacc_tf14_n8__to_z_tf1.npy",
-     'tfreq'        :       3,
+     'RVts_filename':       "t2mmax_1979-2017_averAggljacc_tf14_n8__to_T2mmax_tf1.npy",
+     'tfreq'        :       1,
      'load_mcK'     :       False,
-     'RV_name'      :       'z',
+     'RV_name'      :       'T2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'method'       :       'iter',
@@ -60,7 +60,8 @@ ex = dict(
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
-     'pval_logit_first':       0.10,
+     'use_ts_logit' :       True,
+     'pval_logit_first':    0.10,
      'pval_logit_final':    0.01}
      )
 ex['sstartdate'] = str(ex['startyear']) + '-' + ex['sstartdate']
@@ -138,7 +139,7 @@ ex['hotdaythres'] = RV_ts.mean(dim='time').values + RV_ts.std().values
 
 #ex['lags_idx'] = [12, 18, 24, 30]  
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
-ex['lags'] = [0, 6, 12, 18]  
+ex['lags'] = [0, 6, 12]  
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
@@ -159,7 +160,8 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'sstartdate', 'senddate', 'n_conv', 'leave_n_out',
             'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
-            'n_std', 'tfreq', 'lags', 'n_yrs', 'hotdaythres']
+            'n_std', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
+            'use_ts_logit']
 
 max_key_len = max([len(i) for i in print_ex])
 for key in print_ex:

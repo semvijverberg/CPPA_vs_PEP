@@ -35,8 +35,11 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     
         crosscorr_mcK = func_mcK.cross_correlation_patterns(var_test_mcK, 
                                                             ds_mcK['pattern'].sel(lag=lag))
-        crosscorr_Sem = func_mcK.cross_correlation_patterns(var_test_reg, 
+        if ex['use_ts_logit'] == False:
+            crosscorr_Sem = func_mcK.cross_correlation_patterns(var_test_reg, 
                                                             ds_Sem['pattern'].sel(lag=lag))
+        elif ex['use_ts_logit'] == True:
+            crosscorr_Sem = ds_Sem['ts_prediction'][idx]
 #        if idx == 0:
 #            print(ex['test_years'])
 #            print(crosscorr_Sem.time)
@@ -59,6 +62,11 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                       '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),
                        len(ex['test_RV'][0])))
                 
+                # normalize
+                ex['test_ts_mcK'][idx] = (ex['test_ts_mcK'][idx]-np.mean(ex['test_ts_mcK'][idx])/ \
+                                          np.std(ex['test_ts_mcK'][idx]))
+                ex['test_ts_Sem'][idx] = (ex['test_ts_Sem'][idx]-np.mean(ex['test_ts_Sem'][idx])/ \
+                                          np.std(ex['test_ts_Sem'][idx]))                
                 n_boot = 10
                 ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, n_boot, 'default')

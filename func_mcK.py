@@ -112,7 +112,13 @@ def find_precursor(RV_ts, Prec_reg, ex):
 # Extracting feature to build spatial map
 # ============================================================================= 
    
-    ds_Sem = extract_precursor(train, ex)   
+    ds_Sem = extract_precursor(train, test, ex)   
+    
+# =============================================================================
+# Create 1d timeseries for logitmodel found in 'extract_precursor'
+# =============================================================================
+    
+    ds_Sem = timeseries_for_test(ds_Sem, test, ex)
     
     
     if ex['wghts_accross_lags'] == True:
@@ -132,7 +138,7 @@ def find_precursor(RV_ts, Prec_reg, ex):
     
     return test, train, ds_mcK, ds_Sem, ex
 
-def extract_precursor(train, ex):
+def extract_precursor(train, test, ex):
     #%%
     time = train['RV'].time
     lats = train['Prec'].latitude
@@ -150,10 +156,15 @@ def extract_precursor(train, ex):
                           dims=['lag','latitude','longitude'], name='communities_numbered', 
                           attrs={'units':'regions'})
     
-    array = np.zeros( (len(ex['lags']), len(time)) )
-    pattern_ts = xr.DataArray(data=array, coords=[ex['lags'], time], 
-                          dims=['lag','time'], name='Sem_mean_ts_diff_lags',
-                          attrs={'units':'Kelvin'})
+#    array = np.zeros( (len(ex['lags'])) )
+#    logit_model = xr.DataArray(data=array, coords=[ex['lags'], [0]], 
+#                          dims=['lag', 'model'], name='logitmodel',
+#                          attrs={'units':'[-]'})
+#    
+    logit_model = []
+    
+    sign_reg_kept = np.zeros( len(ex['lags']), dtype=list)
+    
 
     array = np.zeros( (len(ex['lags']), len(pthresholds)) )
     pattern_p = xr.DataArray(data=array, coords=[ex['lags'], pthresholds], 
@@ -181,26 +192,31 @@ def extract_precursor(train, ex):
         composite = train['Prec'].sel(time=events_min_lag)
         #%%
         # extract communities
-        pattern_atlag, commun_numbered, ts_regions_lag_i = extract_commun(
-                        composite, ts_3d, binary_events, ex)  
+        pattern_atlag, commun_numbered, sign_r_kept, logitmodel_lag_i = extract_commun(
+                                                composite, ts_3d, binary_events, ex)  
         
         pattern[idx] = pattern_atlag
         pattern_num[idx]  = commun_numbered
+        sign_reg_kept[idx] = sign_r_kept[0]
+        logit_model.append( logitmodel_lag_i )
         
         # not using pattern covariance, but ts_from_logit
         crosscorr_Sem = cross_correlation_patterns(ts_3d, pattern_atlag)
-        crosscorr_Sem.values = ts_regions_lag_i
-        crosscorr_Sem['time'] = pattern_ts.time
-        pattern_ts[idx] = crosscorr_Sem
+#        crosscorr_Sem.values = ts_regions_lag_i
+#        crosscorr_Sem['time'] = pattern_ts.time
+#        pattern_ts[idx] = crosscorr_Sem
         # Percentile values based on training dataset
         p_pred = []
         for p in pthresholds:	
             p_pred.append(np.percentile(crosscorr_Sem.values, p*10))
         pattern_p[idx] = p_pred
-    ds_Sem = xr.Dataset( {'pattern' : pattern, 'ts' : pattern_ts, 'perc' : pattern_p} )
+    ds_Sem = xr.Dataset( {'pattern' : pattern, 'pattern_num' : pattern_num, 
+                          'logitmodel' : logit_model, 'sign_reg_kept' : sign_reg_kept,
+                          'perc' : pattern_p} )
         
     
     return ds_Sem
+
 
 # =============================================================================
 # =============================================================================
@@ -246,7 +262,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     if ex['wghts_std_anom'] == True: 
         # get a feeling for the variation within the composite, if anomalies are 
         # persistent they are assigned with a heavier weight
-        std_lag =  ts_3d.std(dim='time')
+        std_lag =  ts_3d_trainwghts.std(dim='time')
     #    std_lag.plot()
         # smoothen field
         
@@ -279,15 +295,6 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     # strength is defined as an area weighted values in the composite
     Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid)
     
-    actbox = np.reshape(ts_3d_trainwghts.values, (ts_3d_trainwghts.time.size, 
-                  ts_3d_trainwghts.latitude.size*ts_3d_trainwghts.longitude.size))    
-
-    # get lonlat array of area for taking spatial means 
-    lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
-    cos_box = np.cos(np.deg2rad(lats_gph))
-    cos_box_array = np.repeat(cos_box[None,:], actbox.shape[0], 0)
-    cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
-    
     # Regions are iteratively counted starting from first lag (R0) to last lag R(-1)
     # adapt numbering of different communities/Regions to account for 
     # multiple variables/lags
@@ -300,25 +307,16 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     # if there are less regions that are desired, the n_strongest is lowered
     if n_regions_lag_i <= ex['n_strongest']:
         ex['upd_n_strongest'] = n_regions_lag_i
-        
-
-    # this array will be the time series for each feature
-    ts_regions_lag_i = np.zeros((actbox.shape[0], ex['upd_n_strongest']))
+   
+    # regions investigated to create ts timeseries
+    regions_for_ts = list(np.arange(1, ex['upd_n_strongest']+1))
     
-    # calculate area-weighted mean over features
-    sign_ts_regions = np.zeros( ex['upd_n_strongest'] )
-    for j in range(ex['upd_n_strongest']):
-        # start with empty lonlat array
-        B = np.zeros(Regions_lag_i.shape)
-        # Mask everything except region of interest
-        B[Regions_lag_i == j+1] = 1	
-        # Calculates how values inside region vary over time
-        ts_regions_lag_i[:,j] = np.mean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
-        # get sign of region
-        sign_ts_regions[j] = np.sign(np.mean(Corr_Coeff[B==1]))
 
-    # creating arrays original regions
-    npmap = np.ma.reshape(Regions_lag_i, (len(lat_grid), len(lon_grid)))
+    ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
+                                         regions_for_ts, ts_3d_trainwghts, Corr_Coeff)
+
+    # reshape to latlon grid
+    npmap = np.reshape(Regions_lag_i, (lat_grid.size, lon_grid.size))
     mask_strongest = (npmap!=0) 
     npmap[mask_strongest==False] = 0
     xrnpmap = mean.copy()
@@ -332,8 +330,9 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)   
 #%%
     # get wgths and only regions that contributed to probability    
-    odds, regions_kept, ts_regions_lag_i = train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, 
-                                              bin_event_trainwghts, ex)
+    odds, regions_kept, sign_r_kept, logitmodel = train_weights_LogReg(
+            ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
+                                              
 
     upd_regions = np.zeros(Regions_lag_i.shape)
     for i in range(len(regions_kept)):
@@ -376,7 +375,8 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 #    plt.figure() 
 #    weighted_mean.plot.contourf()
     #%%
-    return weighted_mean, xrnpmap, ts_regions_lag_i
+    return weighted_mean, xrnpmap, sign_r_kept, logitmodel
+
 
 
 def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
@@ -404,7 +404,10 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
     y = binary_events
 #    X_train, X_test, y_train, y_test = train_test_split(
 #                                   X[:,:], y, test_size=0.33)
-    
+
+    # =============================================================================
+    # Step 1: Preselection 
+    # =============================================================================
     # first kick out regions which do not show any relation to the event 
     # i.e. low p-value
     all_regions_significant = True
@@ -453,9 +456,11 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
     regs_for_interac = [i for i in track_r_kept if i not in track_super_sign]
 #%% 
     # =============================================================================
+    # Step 2: Check 'intermediate regions' should be kicked out
+    # =============================================================================
     # Perform logistic regression on combination of two with the regions that were
     # 'not super sign' (pval < ex['pval_logit_final'])
-    # =============================================================================
+    
     if len(regs_for_interac) != 0:
         # check if regions deleted do not have an interacting component
         combi = list(itertools.product([0, 1], repeat=n_feat))[1:]
@@ -494,13 +499,13 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
         y_train = y
     
         logit_model=sm.Logit(y_train,X_inter)
-        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-        p_vals = result.pvalues 
-        odds_interac   = np.exp(result.params)
+        result_inter = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+        p_vals = result_inter.pvalues 
+        odds_interac   = np.exp(result_inter.params)
         mask_cregions_keeping = (p_vals <= ex['pval_logit_final']) #* (odds > 1.)
         cregions_sign_idx = list(np.where(mask_cregions_keeping)[0])
         cregions_sign = np.array(combregions)[cregions_sign_idx]
-        result.summary2()
+        result_inter.summary2()
         if len(cregions_sign_idx)==0.:
             # delete regions that are not kept after testing if they got good enough
             # p_vals
@@ -514,20 +519,21 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
             
             keep_duetointer = []
             comb_sign_r = set(cregions_sign.flatten())
-            comb_sign_i = [i-1 for i in comb_sign_r if i not in regs_for_interac]
+            comb_sign_ind = [i for i in comb_sign_r if i not in regs_for_interac]
+            comb_sign_ind_idx = [i-1 for i in comb_sign_ind if i in regions]
             X_invol_inter = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
             X_invol_inter = X_invol_inter * sign_ts_regions[None,:]
-            X_invol_inter = X_invol_inter[:,comb_sign_i]
+            X_invol_inter = X_invol_inter[:,comb_sign_ind_idx]
             
             ts_r_int_sign = ts_regions_interaction[:,cregions_sign_idx]
             
             X_sing_inter = np.concatenate((X_invol_inter, ts_r_int_sign), axis=1)
             
             logit_model=sm.Logit(y_train,X_sing_inter)
-            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-            odds_sin_inter = np.exp(result.params)
-            p_vals = result.pvalues 
-            n_sign_single = len(comb_sign_i)
+            result_int_test = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+            odds_sin_inter = np.exp(result_int_test.params)
+            p_vals = result_int_test.pvalues 
+            n_sign_single = len(comb_sign_ind_idx)
             p_vals_single = p_vals[:n_sign_single]
             odds_single   = odds_sin_inter[:n_sign_single]
             odds_inter    = odds_sin_inter[n_sign_single:]
@@ -540,7 +546,7 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
                 if all(elem in regs_for_interac  for elem in comb_r): 
                     p_val = p_vals_inter[i]
                     if p_val < ex['pval_logit_final'] and odds_inter[i] > 1.0:
-                        print('p_val inter two weak regions : {}'.format(p_val))
+#                        print('p_val inter two weak regions : {}'.format(p_val))
                         keep_duetointer.append(comb_r)
                         # the regions are kept into track_r_kept
                         
@@ -549,15 +555,15 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
                     # a 'single' region investigated for interaction with region
                     # which showed not a very significant p_val
                     reg_investigated = [i for i in comb_r if i in regs_for_interac]
-                    r_single_idx = [i-1 for i in comb_r if i not in regs_for_interac]
-                    idx_sign_single = comb_sign_i.index(r_single_idx)
+                    reg_individual = [i for i in comb_r if i not in regs_for_interac]
+                    idx_sign_single = comb_sign_ind.index(reg_individual)
                     p_val_inter  = p_vals_inter[i]
                     p_val_single = p_vals_single[idx_sign_single]
                     odds_int     = odds_inter[i]
                     odds_sin     = odds_single[idx_sign_single]
                     if p_val_inter < p_val_single and odds_int > odds_sin:
-                        print('p_val_inter : {}\np_val_single {}'.format(
-                                p_val_inter, p_val_single))
+#                        print('p_val_inter : {}\np_val_single {}'.format(
+#                                p_val_inter, p_val_single))
                         if p_val_inter < ex['pval_logit_final']:
                             keep_duetointer.append(reg_investigated)
                         
@@ -578,19 +584,27 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
                 idx_pred_inter = [i for i in range(n_feat) if regions[i] in add_pred_inter]
                 ts_inter_kept   = ts_regions_lag_i[:,idx_pred_inter[0]] * ts_regions_lag_i[:,idx_pred_inter[1]]
                 X_inter_kept = ts_inter_kept[:,None] / np.std(ts_inter_kept[:,None], axis = 0)
-            
-                X_final = np.concatenate( (X_train, X_inter_kept), axis=1)
-            else:
-                X_final = X_train
-
-            logit_model=sm.Logit(y_train,X_final)
-            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-            odds_new = np.exp(result.params)
-            p_vals = result.pvalues 
+#            
+#                X_final = np.concatenate( (X_train, X_inter_kept), axis=1)
+#            else:
+#                X_final = X_train
+    # =============================================================================
+    # Step 3 Perform log regression on (individual) regions that past step 1 & 2.
+    # =============================================================================
+    # all regions
+    X = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
+    # select only region in track_regions_kept:
+    r_kept_idx = [i-1 for i in regions if i in track_r_kept]
+    sign_r_kept = sign_ts_regions[None,r_kept_idx]
+    X_final = X[:,r_kept_idx] * sign_r_kept
+    logit_model=sm.Logit(y_train,X_final)
+    result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+    odds   = np.exp(result.params)
+    p_vals = result.pvalues 
     #        print(result.summary2())
             
-            odds_new = odds_new[:len(track_r_kept)]
-    ts_predict = result.predict()
+#            odds_new = odds_new[:len(track_r_kept)]
+    logitmodel = result
         
         
 #    results = pd.DataFrame(columns=['aic', 'aicc', 'bic', 'p_vals'])
@@ -611,13 +625,92 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
 #    for idx in range(len(results)):
 #        rel_likely = np.exp(min_aic-)
     
-        
-
     #%%        
-    return odds, track_r_kept, ts_predict
+    return odds, track_r_kept, sign_r_kept, logitmodel
 
+def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
+    
+    n_time   = ts_3d.time.size
+    lat_grid = ts_3d.latitude
+    lon_grid = ts_3d.longitude
+    regions_for_ts = list(regions_for_ts)
+    
+    actbox = np.reshape(ts_3d.values, (n_time, 
+                  lat_grid.size*lon_grid.size))  
+    
+    # get lonlat array of area for taking spatial means 
+    lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
+    cos_box = np.cos(np.deg2rad(lats_gph))
+    cos_box_array = np.repeat(cos_box[None,:], actbox.shape[0], 0)
+    cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
+    
 
+    # this array will be the time series for each feature
+    ts_regions_lag_i = np.zeros((actbox.shape[0], len(regions_for_ts)))
+    
+    # track sign of eacht region
+    sign_ts_regions = np.zeros( len(regions_for_ts) )
+    
+    
+    if len(Regions_lag_i.shape) == 1.:
+        Regions = Regions_lag_i
+    elif len(Regions_lag_i.shape) == 2.:
+        Regions = np.reshape(Regions_lag_i, (Regions_lag_i.size))
+    # calculate area-weighted mean over features
+    for r in regions_for_ts:
+        idx = regions_for_ts.index(r)
+        # start with empty lonlat array
+        B = np.zeros(Regions.shape)
+        # Mask everything except region of interest
+        B[Regions == r] = 1	
+        # Calculates how values inside region vary over time
+        ts_regions_lag_i[:,idx] = np.mean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
+        # get sign of region
+        sign_ts_regions[idx] = np.sign(np.mean(mean[B==1]))
+#    print(sign_ts_regions)
+    
 
+    return ts_regions_lag_i, sign_ts_regions
+
+def timeseries_for_test(ds_Sem, test, ex):
+    
+    time = test['RV'].time
+    
+    array = np.zeros( (len(ex['lags']), len(time)) )
+    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time], 
+                          dims=['lag','time'], name='ts_predict_logit',
+                          attrs={'units':'Kelvin'})
+    
+    for lag in ex['lags']:
+        idx = ex['lags'].index(lag)
+        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+                                           test['Prec'].time[0].dt.hour)
+        # select antecedant SST pattern to summer days:
+        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
+        var_test_mcK = find_region(test['Prec'], region='PEPrectangle')[0]
+    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+    
+        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
+        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
+        mean = ds_Sem['pattern'].sel(lag=lag)
+        mean = np.reshape(mean.values, (mean.size))
+
+        xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
+        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
+        
+        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
+                        xrpattern_lag_i.values, regions_for_ts, 
+                        var_test_reg, mean)
+        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
+        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
+        
+        ts_pred = logit_model_lag_i.predict(ts_regions_lag_i)
+#        ts_prediction = (ts_pred-np.mean(ts_pred))/ np.std(ts_pred)
+        ts_predic[idx] = ts_pred
+    
+    ds_Sem['ts_prediction'] = ts_predic
+    return ds_Sem
+        
 #def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
 #    #%%
 #    from sklearn.linear_model import LogisticRegression
