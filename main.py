@@ -39,7 +39,7 @@ if os.path.isdir(path_pp) == False: os.makedirs(path_pp)
 
 
 ex = dict(
-     {'grid_res'     :       2.5,
+     {'grid_res'    :       2.5,
      'startyear'    :       1979,
      'endyear'      :       2017,
      'base_path'    :       base_path,
@@ -47,10 +47,10 @@ ex = dict(
      'path_pp'      :       path_pp,
      'sstartdate'   :       '06-01', #'1982-06-24',
      'senddate'     :       '08-31', #'1982-08-22',
-     'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst_NOAA",
+     'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/T95_sst",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc_tf14_n8__to_T2mmax_tf1.npy",
-     'tfreq'        :       1,
+     'tfreq'        :       3,
      'load_mcK'     :       False,
      'RV_name'      :       'T2mmax',
      'name'         :       'sst',
@@ -62,7 +62,9 @@ ex = dict(
      'splittrainfeat':      False,
      'use_ts_logit' :       True,
      'pval_logit_first':    0.10,
-     'pval_logit_final':    0.01}
+     'pval_logit_final':    0.01,
+     'new_model_sel':       True,
+     'only_add_likeli':     True}
      )
 ex['sstartdate'] = str(ex['startyear']) + '-' + ex['sstartdate']
 ex['senddate'] = str(ex['startyear']) + '-' + ex['senddate']
@@ -126,20 +128,21 @@ if ex['name']=='sst':
 RV_ts, datesmcK = func_mcK.time_mean_bins(RVts, ex)
 expanded_time = func_mcK.expand_times_for_lags(datesmcK, ex)
 # Converting Mckinnon timestemp to match xarray timestemp
-expandeddaysmcK = func_mcK.to_datesmcK(expanded_time, expanded_time[0].hour, varfullgl.time[0].dt.hour)
+#expandeddaysmcK = func_mcK.to_datesmcK(expanded_time, expanded_time[0].hour, varfullgl.time[0].dt.hour)
 # region mckinnon - expanded time series
-Prec_reg = func_mcK.find_region(varfullgl.sel(time=expandeddaysmcK), region=ex['region'])[0]
+#Prec_reg = func_mcK.find_region(varfullgl.sel(time=expandeddaysmcK), region=ex['region'])[0]
+Prec_reg = func_mcK.find_region(varfullgl, region=ex['region'])[0]
 Prec_reg, datesvar = func_mcK.time_mean_bins(Prec_reg, ex)
 
 # binary time serie when T95 exceeds 1 std
 ex['hotdaythres'] = RV_ts.mean(dim='time').values + RV_ts.std().values
 #ex['hotdaythres'] = np.percentile(RV_ts.values, 80)
-# If method == 'random' - Run until ROC has converged
+
 
 
 #ex['lags_idx'] = [12, 18, 24, 30]  
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
-ex['lags'] = [0, 6, 12]  
+ex['lags'] = [6] #[0, 6, 12, 18]  
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
@@ -161,7 +164,7 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
             'n_std', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
-            'use_ts_logit']
+            'use_ts_logit', 'pval_logit_first', 'pval_logit_final']
 
 max_key_len = max([len(i) for i in print_ex])
 for key in print_ex:
@@ -171,8 +174,8 @@ for key in print_ex:
     print('\'{}\'\t\t{}'.format(key_exp, ex[key]))
 
     
-##np.save(os.path.join(script_dir, 'ERA_{}_{}_default_settings.npy'.format(
-##        ex['RV_name'], ex['name'])), ex)
+#np.save(os.path.join(script_dir, 'ERA_{}_{}_default_settings.npy'.format(
+#        ex['RV_name'], ex['name'])), ex)
 
 #%% Run code with ex settings
 #ex['n_conv'] = 3
@@ -220,7 +223,7 @@ ran_ROCS        = [ex['score_per_run'][i][4] for i in range(len(ex['score_per_ru
 score_mcK       = np.round(ex['score_per_run'][-1][2]['score'], 2)
 score_Sem       = np.round(ex['score_per_run'][-1][3]['score'], 2)
 
-
+#%%
 # mcKinnon plot
 filename = os.path.join(ex['exp_folder'], 'mcKinnon composite_tf{}_{}'.format(
             ex['tfreq'], ex['lags']))
@@ -257,11 +260,16 @@ if ex['leave_n_out']:
                     'vmin' : pers_patt.min().values, 'vmax' : pers_patt.max().values, 
                    'cmap' : plt.cm.gist_heat_r, 'column' : 2} )
     func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
-#%% Weighing features if there are extracted every run (training set)¶
+#%% Weighing features if there are extracted every run (training set)
 # weighted by persistence of pattern over
 if ex['leave_n_out']:
     mean_n_patterns = patterns.mean(dim='n_tests') * wghts/np.max(wghts)
-    #pers_patt_filter = mask_pers * patterns.mean(dim='n_tests')
+    # only keep gridcells that were extracted 80% of the test years
+    pers_patt_filter = patterns.sel(n_tests=0).copy().drop('n_tests')
+    ex['persistence_criteria'] = int(0.5 * len(set(RV_ts.time.dt.year.values)))
+    mask_pers = (wghts >= ex['persistence_criteria'])
+    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
+    mean_n_patterns.values = mask_pers * mean_n_patterns.values
     mean_n_patterns.attrs['units'] = 'weighted by persistence of pattern over {} runs'.format(ex['n_conv'])
     mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
     func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=None)
