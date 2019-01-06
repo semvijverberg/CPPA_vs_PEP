@@ -448,6 +448,7 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         else:
             # Delete from combs
             X = np.delete(X, min_bic, axis=1)
+        
     
 
 
@@ -469,7 +470,7 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         
         sorted_odds = pd_res.sort_values(by=['odds'], ascending=False)
         # take top 25 % of odds
-        idx = int(np.percentile(range(X.shape[1]), 30))
+        idx = max(1, int(np.percentile(range(X.shape[1]), 30)) )
         min_bic = sorted_odds[:idx]['bic'].idxmin()
         
         val_bic = pd_res.iloc[min_bic]['bic']
@@ -486,6 +487,7 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         X = np.delete(X, min_bic, axis=1)
         #reloop, is new bic value really lower then the old one?
         diff.append( (final_bics[-1] - final_bics[-2])/final_bics[1] )
+        # terminate if condition is not met 4 times in a row
         test_n_extra = 8
         if len(diff) > test_n_extra:
             # difference of last 4 attempts
@@ -493,7 +495,11 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
             # Decrease in bic should be bigger than 1% of the initial bic value (only first par)
             if len(diffs) == test_n_extra-1:
                 forward_not_converged = False
-                
+            # if all attempts are made, then do not delete the last variable from X
+            if X.shape[1] == 1:
+                forward_not_converged = False
+
+        
     final_forward = sm.Logit( y_train, X_for )
     result = final_forward.fit(disp=0, method='newton', tol=1E-8, retall=True)
     print(result.summary2())
@@ -545,7 +551,8 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
     pd_str = pd_str.dropna()
     
     
-    B_coeff = pd_str['B_coeff'].values.squeeze()
+    B_coeff = pd_str['B_coeff'].values.squeeze().flatten()
+    
     track_r_kept = pd_str['B_coeff'].index.values
     final_model = result
     # update combs_kept, region numbers are changed further up to 1,2,3, etc..
