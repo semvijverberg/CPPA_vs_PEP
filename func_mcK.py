@@ -439,15 +439,15 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         
         
         result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-        if np.exp(result.params) > 1.0:
-            X_for = X[:,min_bic,None]
-            combs_kept.append(combs[min_bic])
-            val_bic = bic[min_bic]
-            X = np.delete(X, min_bic, axis=1)
-            first_par_decr = False
-        else:
-            # Delete from combs
-            X = np.delete(X, min_bic, axis=1)
+#        if np.exp(result.params) > 1.0:
+        X_for = X[:,min_bic,None]
+        combs_kept.append(combs[min_bic])
+        val_bic = bic[min_bic]
+        X = np.delete(X, min_bic, axis=1)
+        first_par_decr = False
+#        else:
+#            # Delete from combs
+#            X = np.delete(X, min_bic, axis=1)
         
     
 
@@ -468,10 +468,13 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
             odds_added = np.exp(result.params[-1]) 
             pd_res = pd_res.append( {'bic':result.bic, 'odds':odds_added} , ignore_index=True )
         
-        sorted_odds = pd_res.sort_values(by=['odds'], ascending=False)
-        # take top 25 % of odds
-        idx = max(1, int(np.percentile(range(X.shape[1]), 30)) )
-        min_bic = sorted_odds[:idx]['bic'].idxmin()
+#        sorted_odds = pd_res.sort_values(by=['odds'], ascending=False)
+#        # take top 25 % of odds
+#        idx = max(1, int(np.percentile(range(X.shape[1]), 30)) )
+#        min_bic = sorted_odds[:idx]['bic'].idxmin()
+    
+        # just take param with min_bic
+        min_bic = pd_res['bic'].idxmin()
         
         val_bic = pd_res.iloc[min_bic]['bic']
 #        print(val_bic)
@@ -479,7 +482,9 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
             # relative difference vs. initial bic
         diff_m = (final_bics[-1] - final_bics[-2])/final_bics[1] 
         threshold_bic = 1E-4 # used to be -1%, i.e. 0.01
-        if diff_m < threshold_bic and np.exp(result.params[-1]) > 1.:
+#        if diff_m < threshold_bic and np.exp(result.params[-1]) > 1.:
+        threshold_bic = -0.01
+        if diff_m < threshold_bic:
             # add parameter to model only if they substantially decreased bic
             X_for = np.concatenate( (X_for, X[:,min_bic,None] ), axis=1)
             combs_kept.append(combs[min_bic])
