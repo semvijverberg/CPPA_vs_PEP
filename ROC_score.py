@@ -12,9 +12,10 @@ import numpy as np
 import pandas as pd
 import func_mcK
 import xarray as xr
+import matplotlib.pyplot as plt
 
 def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
-        
+    #%%
     # =============================================================================
     # calc ROC scores
     # =============================================================================
@@ -54,7 +55,21 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     #                update_ROCS = ex['test_ts_mcK'][idx].append(list(crosscorr_mcK.values))
                 ex['test_ts_mcK'][idx] = np.concatenate( [ex['test_ts_mcK'][idx], crosscorr_mcK.values] )
                 ex['test_ts_Sem'][idx] = np.concatenate( [ex['test_ts_Sem'][idx], crosscorr_Sem.values] )
-                ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )             
+                ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )  
+                
+                
+                if ex['plot_ts'] == True:
+                    ax = plt.subplot(111)
+                    ax.set_ylim(-1,1)
+                    ax.plot(crosscorr_mcK.values, label='mcK')
+                    ax.plot(crosscorr_Sem.values, label='Sem')
+                    ax.plot(test['RV']/(3*test['RV'].std()))
+                    ax.legend(loc='lower left')
+                    plt.text(0.5,0.5, '# events {}'.format(len(test['events']),
+                             horizontalalignment='center',
+                             verticalalignment='center', transform=ax.transAxes))
+                    plt.show()
+                    
         
             if  ex['n'] == ex['n_conv']-1:
                 if idx == 0:
@@ -67,11 +82,19 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                                           np.std(ex['test_ts_mcK'][idx]))
                 ex['test_ts_Sem'][idx] = (ex['test_ts_Sem'][idx]-np.mean(ex['test_ts_Sem'][idx])/ \
                                           np.std(ex['test_ts_Sem'][idx]))                
+                
+#                Prec_threshold_mcK = np.percentile(ex['test_ts_mcK'][idx], 70)
+#                Prec_threshold_Sem = np.percentile(ex['test_ts_Sem'][idx], 70)
+#
+#                func_mcK.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+                
                 n_boot = 10
                 ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, n_boot, 'default')
                 ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, 0, 'default')[0]
+                
                 print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
@@ -83,15 +106,15 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
             Prec_threshold_mcK = ds_mcK['perc'].sel(percentile=60 /10).values[0]
             Prec_threshold_Sem = ds_Sem['perc'].sel(percentile=60 /10).values[0]
             
-            # check if there are any detections
-            Prec_det_mcK = (func_mcK.Ev_timeseries(crosscorr_mcK, 
-                                           Prec_threshold_mcK).size > ex['min_detection'])
-            Prec_det_Sem = (func_mcK.Ev_timeseries(crosscorr_Sem, 
-                                           Prec_threshold_Sem).size > ex['min_detection'])
-            
-    #        # plot the detections
-    #        func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, RV_ts_test, Prec_threshold_Sem, 
-    #                                        Prec_threshold_mcK, ex['hotdaythres'], test_years[0])
+#            # check if there are any detections
+#            Prec_det_mcK = (func_mcK.Ev_timeseries(crosscorr_mcK, 
+#                                           Prec_threshold_mcK).size > ex['min_detection'])
+#            Prec_det_Sem = (func_mcK.Ev_timeseries(crosscorr_Sem, 
+#                                           Prec_threshold_Sem).size > ex['min_detection'])
+#            
+#    #        # plot the detections
+#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
     
             if Prec_det_mcK == True:
                 n_boot = 1
@@ -123,11 +146,24 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
             ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
                                    ex['hotdaythres'], lag, n_boot, 'default')
             ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
-                                      ex['hotdaythres'], lag, 0, ds_Sem['perc'])[0]
+                                      ex['hotdaythres'], lag, 0, 'default')[0]
+            
+            Prec_threshold_Sem = np.percentile(crosscorr_Sem, 70)
+            Prec_threshold_mcK = np.percentile(crosscorr_mcK, 70)
+            
+            
+#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+            
+#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], 
+#                                            ds_Sem['perc'].sel(percentile=5)), 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+            
             print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
-        
+    
+    #%%
     # store output:
     ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
                       dims=['lag'], name='score_diff_lags',
@@ -135,6 +171,9 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
                       dims=['lag'], name='score_diff_lags',
                       attrs={'units':'-'})
+    
+    # store mean values of prediciton time serie
+        
     
     ex['score_per_run'].append([ex['test_years'], len(test['events']), ds_mcK, ds_Sem, ROC_boot])
     return ex

@@ -86,9 +86,10 @@ def find_precursor(RV_ts, Prec_reg, ex):
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         now = datetime.datetime.now()
-        ex['exp_folder'] = '{}_output_{}_{}_tf{}_lags{}_{}hr'.format(ex['method'],
+        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}_{}deg_{}'.format(ex['method'],
                           ex['startyear'], ex['endyear'],
-                          ex['tfreq'], ex['lags'], now.strftime("%Y-%m-%d"))
+                          ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
+                          now.strftime("%Y-%m-%d"))
     elif ex['leave_n_out'] == False:
         train = dict( { 'Prec'  : Prec_reg,
                         'RV'    : RV_ts,
@@ -334,7 +335,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 #%%
     # get wgths and only regions that contributed to probability    
     if ex['new_model_sel'] == False:
-        odds, regions_kept, sign_r_kept, logitmodel = train_weights_LogReg(
+        odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
                 ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
 
     if ex['new_model_sel'] == True:
@@ -373,7 +374,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     for f in features:
         idx_f = features.index(f)
         mask_single_feature = (npmap==f)
-        weight = round(odds[int(idx_f)], 2) #!!!!!!!! idx_f-1?
+        weight = round(odds[int(idx_f)], 2) 
         np.place(arr=weights, mask=mask_single_feature, vals=weight)
         weights[mask_single_feature] = weight
 #            weights = weights/weights.max()
@@ -417,7 +418,10 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         ind_r = np.where(np.array(c) == 1)[0]
         X[:,idx] = np.product(X_n[:,ind_r], axis=1)
      
-    # Forward selection
+# =============================================================================
+#    # Forward selection
+# =============================================================================
+    # First parameter
     combs_kept = []
     final_bics = [9E8]
     bic = []
@@ -430,8 +434,8 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
             result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
             bic.append(result.bic)
             odds_list.append( np.exp(result.params) )
-#        min_bic = np.argmin(bic)
-        min_bic = np.argmax(odds_list)
+        min_bic = np.argmin(bic)
+#        min_bic = np.argmax(odds_list)
         # if first par does not decrease the likelihood, then I keep it
         # otherwise, I am just picking a random area from my regions, that has 
         # likely nothing to do with the event
@@ -449,9 +453,7 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
 #            # Delete from combs
 #            X = np.delete(X, min_bic, axis=1)
         
-    
-
-
+    # incrementally add parameters
     final_bics.append(val_bic)
     diff = []
     forward_not_converged = True
@@ -493,27 +495,30 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         #reloop, is new bic value really lower then the old one?
         diff.append( (final_bics[-1] - final_bics[-2])/final_bics[1] )
         # terminate if condition is not met 4 times in a row
-        test_n_extra = 8
+        test_n_extra = 5
         if len(diff) > test_n_extra:
-            # difference of last 4 attempts
-            diffs = [i for i in diff[-test_n_extra:] if i > threshold_bic]
+            # difference of last 5 attempts
             # Decrease in bic should be bigger than 1% of the initial bic value (only first par)
-            if len(diffs) == test_n_extra-1:
+            diffs = [i for i in diff[-test_n_extra:] if i > threshold_bic]
+            
+            if len(diffs) == test_n_extra:
                 forward_not_converged = False
-            # if all attempts are made, then do not delete the last variable from X
-            if X.shape[1] == 1:
-                forward_not_converged = False
+        # if all attempts are made, then do not delete the last variable from X
+        if X.shape[1] == 1:
+            forward_not_converged = False
 
         
     final_forward = sm.Logit( y_train, X_for )
     result = final_forward.fit(disp=0, method='newton', tol=1E-8, retall=True)
-    print(result.summary2())
+#    print(result.summary2())
             
     
     
-    plt.plot(diff[1:])
+#    plt.plot(diff[1:])
    #%%
-    # Backward selection
+# =============================================================================
+#   # Backward selection
+# =============================================================================
     backward_not_converged = True
     while backward_not_converged and X_for.shape[1] > 1:
         bicb = []
@@ -527,13 +532,16 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
         diff = (val_bicb - val_bic) / val_bic
         # even if val_bicb is not lower, but within 1% of larger model,
         # then the model with df-1 is kept.
-        if abs(diff) < -0.01:
+        if abs(diff) < threshold_bic:
             X_for = np.delete(X_for, min_bicb, axis=1)
             combs_kept = [c for c in combs_kept if combs_kept.index(c) != min_bicb]
         else:
             backward_not_converged = False
-            
-    # Final model
+   
+         
+# =============================================================================
+#   # Final model
+# =============================================================================
     final_model = sm.Logit( y_train, X_for )
     result = final_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
     odds = np.exp(result.params)
@@ -561,10 +569,11 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
     track_r_kept = pd_str['B_coeff'].index.values
     final_model = result
     # update combs_kept, region numbers are changed further up to 1,2,3, etc..
-    del_zeros = np.sum(combs_kept,axis=0) == 1
+    del_zeros = np.sum(combs_kept,axis=0) >= 1
     combs_kept_new = [tuple(np.array(c)[del_zeros]) for c in combs_kept ]
     #%%
     return B_coeff, track_r_kept, combs_kept_new, final_model
+
 
 
 def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
@@ -600,13 +609,17 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
     # first kick out regions which do not show any relation to the event 
     # i.e. low p-value
     all_regions_significant = True
+    i = 0
+    init_vs_final_bic = [] #np.zeros( (len(ex['lags'])) , dtype=list)
     while all_regions_significant:
         X_train = X * signs[None,:]
         y_train = y
 
         logit_model=sm.Logit(y_train,X_train)
         result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-        
+        if i == 0:
+#            print('initial bic value {}'.format(result.bic))
+            init_vs_final_bic.append(result.bic)
         if result.mle_retvals['converged'] == False:
             print('logistic regression did not converge, taking odds of prev'
                   'iteration or - if not present -, all odds (wghts) are equal')
@@ -635,6 +648,7 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
                                         
             if len(regions_not_sign) == 0:
                 all_regions_significant = False
+        i += 1
 #    print(result.summary2())
 
     # regions to be futher investigated before throwing out
@@ -793,7 +807,8 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
             
 #            odds_new = odds_new[:len(track_r_kept)]
     logitmodel = result
-        
+#    print('final bic value {}'.format(logitmodel.bic))
+    init_vs_final_bic.append(logitmodel.bic)
         
 #    results = pd.DataFrame(columns=['aic', 'aicc', 'bic', 'p_vals'])
 #    for comb in combinations:
@@ -856,7 +871,7 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
         # get sign of region
         sign_ts_regions[idx] = np.sign(np.mean(mean[B==1]))
 #    print(sign_ts_regions)
-    
+
 
     return ts_regions_lag_i, sign_ts_regions
 
@@ -945,10 +960,11 @@ def timeseries_for_test(ds_Sem, test, ex):
                         xrpattern_lag_i.values, regions_for_ts, 
                         var_test_reg, mean)
         ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
-        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
+        # normalize time series (as done in the training)        
+        X_n = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
         
-        ts_pred = logit_model_lag_i.predict(ts_regions_lag_i)
-#        ts_prediction = (ts_pred-np.mean(ts_pred))/ np.std(ts_pred)
+        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
+        ts_pred = logit_model_lag_i.predict(X_n)
         ts_predic[idx] = ts_pred
     
     ds_Sem['ts_prediction'] = ts_predic
@@ -1771,8 +1787,11 @@ def plot_events_validation(pred1, pred2, obs, pt1, pt2, othreshold, test_year=No
 #    othreshold = ex['hotdaythres']
 #    test_year = int(crosscorr_Sem.time.dt.year[0])
     
+    
+        
+    
     def predyear(pred, obs):
-        if str(type(test_year)) == "<class 'numpy.int64'>" or str(type(test_year)) == 'int':
+        if str(type(test_year)) == "<class 'numpy.int64'>" or str(type(test_year)) == "<class 'int'>":
             predyear = pred.where(pred.time.dt.year == test_year).dropna(dim='time', how='any')
             obsyear  = obs.where(obs.time.dt.year == test_year).dropna(dim='time', how='any')
             predyear['time'] = obsyear.time
@@ -1857,10 +1876,11 @@ def plot_oneyr_events(xarray, threshold, test_year):
 
 def plotting_wrapper(plotarr, filename, ex, kwrgs=None):
 #    map_proj = ccrs.Miller(central_longitude=240)  
-    
+    folder_name = os.path.join(ex['figpathbase'], ex['exp_folder'])
+    if os.path.isdir(folder_name) != True : 
+        os.makedirs(folder_name)
     file_name = os.path.join(ex['figpathbase'], filename)
-    if os.path.isdir(file_name) != True : 
-        os.makedirs(file_name)
+
     if kwrgs == None:
         kwrgs = dict( {'title' : plotarr.name, 'clevels' : 'notdefault', 'steps':17,
                         'vmin' : -3*plotarr.std().values, 'vmax' : 3*plotarr.std().values, 
