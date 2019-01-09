@@ -39,7 +39,7 @@ if os.path.isdir(path_pp) == False: os.makedirs(path_pp)
 
 
 ex = dict(
-     {'grid_res'    :       0.75,
+     {'grid_res'    :       2.5,
      'startyear'    :       1979,
      'endyear'      :       2017,
      'base_path'    :       base_path,
@@ -60,7 +60,7 @@ ex = dict(
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
-     'use_ts_logit' :       False,
+     'use_ts_logit' :       True,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.01,
      'new_model_sel':       False,
@@ -151,7 +151,7 @@ else:
 #ex['lags_idx'] = [12, 18, 24, 30]  
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = False
-ex['lags'] =   [0, 6, 12, 18]  # [6] # [0, 6, 12, 18] 
+ex['lags'] =   [1,2]  # [6] # [0, 6, 12, 18] 
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
@@ -185,7 +185,6 @@ for key in print_ex:
     printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
     print(printline)
 
-    
 #np.save(os.path.join(script_dir, 'ERA_{}_{}_default_settings.npy'.format(
 #        ex['RV_name'], ex['name'])), ex)
 
@@ -249,16 +248,19 @@ mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
 filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']) )
 func_mcK.plotting_wrapper(mean_n_patterns, filename, ex)
 
+#%%
 # save ex setting in text file
-txtfile = open(os.path.join(ex['exp_folder'], 'experiment_settings.txt'), mode='w')
-max_key_len = max([len(i) for i in ex.keys()])
-for key in ex.keys():
-    key_len = len(key)
-    expand = max_key_len - key_len
-    key_exp = key + ' ' * expand
-    printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
-    print(printline)
-    txtfile.write(printline)
+folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
+#folder = '/Users/semvijverberg/Downloads'
+txtfile = os.path.join(folder, 'experiment_settings.txt')
+with open(txtfile, "w") as text_file:
+    max_key_len = max([len(i) for i in print_ex])
+    for key in print_ex:
+        key_len = len(key)
+        expand = max_key_len - key_len
+        key_exp = key + ' ' * expand
+        printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+        print(printline, file=text_file)
 #%% Counting times gridcells were extracted
 if ex['leave_n_out']:
     n_lags = patterns.sel(n_tests=0).lag.size
@@ -303,6 +305,39 @@ if ex['leave_n_out']:
                                     ex['persistence_criteria'], ex['n_conv']))
     func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=None)
 
+
+#%% Regions extracted:
+
+#lats = Prec_reg.latitude
+#lons = Prec_reg.longitude
+#array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+#region_num = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+#                      dims=['n_tests', 'lag','latitude','longitude'], 
+#                      name='{}_tests_patterns'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+#
+#if ex['leave_n_out']:
+#    n_lags = patterns.sel(n_tests=0).lag.size
+#    n_lats = patterns.sel(n_tests=0).latitude.size
+#    n_lons = patterns.sel(n_tests=0).longitude.size
+#    
+#    pers_patt = patterns.sel(n_tests=0).copy()
+#    arrpatt = np.nan_to_num(patterns.values)
+#    mask_patt = (arrpatt != 0)
+#    arrpatt[mask_patt] = 1
+#    wghts = np.zeros( (n_lags, n_lats, n_lons) )
+#    #plt.imshow(arrpatt[0,0]) ; plt.colorbar()
+#    for l in ex['lags']:
+#        i = ex['lags'].index(l)
+#        wghts[i] = np.sum(arrpatt[:,i,:,:], axis=0)
+#    pers_patt.values = wghts
+#    
+#    pers_patt.attrs['units'] = 'persistence pattern over {} runs'.format(ex['n_conv'])
+#    pers_patt.attrs['title'] = 'ROC {}'.format(score_Sem.values)
+#    filename = os.path.join(ex['exp_folder'], 'counting_times_extracted_over_{}_tests'.format(ex['n_conv']) )
+#    kwrgs = dict( {'title' : pers_patt.name, 'clevels' : 'notdefault', 'steps':17,
+#                    'vmin' : pers_patt.min().values, 'vmax' : pers_patt.max().values, 
+#                   'cmap' : plt.cm.gist_heat_r, 'column' : 2} )
+#    func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
 
 ## Only keep gridcells that were extracted every run
 #if ex['leave_n_out']:

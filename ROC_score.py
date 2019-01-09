@@ -91,9 +91,13 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                 
                 n_boot = 10
                 ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
-                                      ex['hotdaythres'], lag, n_boot, 'default')
-                ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
-                                      ex['hotdaythres'], lag, 0, 'default')[0]
+                                      ex['hotdaythres'], lag, n_boot, ex, 'default')
+                if ex['use_ts_logit'] == True:
+                    ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
+                                      ex['hotdaythres'], lag, 0, ex, 'default')[0]
+                elif ex['use_ts_logit'] == False:
+                    ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
+                                      ex['hotdaythres'], lag, 0, ex, ds_Sem['perc'])[0]
                 
                 print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
@@ -119,7 +123,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
             if Prec_det_mcK == True:
                 n_boot = 1
                 ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
-                                      ex['hotdaythres'], lag, n_boot, ds_mcK['perc'])
+                                      ex['hotdaythres'], lag, n_boot, ex, ds_mcK['perc'])
             else:
                 print('Not enough predictions detected, neglecting this predictions')
                 ROC_mcK[idx] = ROC_boot = 0.5
@@ -129,7 +133,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
             if Prec_det_Sem == True:
                 n_boot = 0
                 ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
-                                      ex['hotdaythres'], lag, n_boot, ds_Sem['perc'])[0]
+                                      ex['hotdaythres'], lag, n_boot, ex, ds_Sem['perc'])[0]
             else:
                 print('Not enough predictions detected, neglecting this predictions')
                 ROC_Sem = ROC_boot = 0.5
@@ -144,9 +148,9 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                 print('performing hindcast')
             n_boot = 5
             ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
-                                   ex['hotdaythres'], lag, n_boot, 'default')
+                                   ex['hotdaythres'], lag, n_boot, ex, 'default')
             ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
-                                      ex['hotdaythres'], lag, 0, 'default')[0]
+                                      ex['hotdaythres'], lag, 0, ex, 'default')[0]
             
             Prec_threshold_Sem = np.percentile(crosscorr_Sem, 70)
             Prec_threshold_mcK = np.percentile(crosscorr_mcK, 70)
@@ -178,7 +182,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     ex['score_per_run'].append([ex['test_years'], len(test['events']), ds_mcK, ds_Sem, ROC_boot])
     return ex
 
-def ROC_score(predictions, observed, thr_event, lag, n_boot, thr_pred='default'):
+def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='default'):
     
 #    predictions = ex['test_ts_mcK'][idx]
 #    observed = RV_ts
@@ -223,17 +227,31 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, thr_pred='default')
         
      
     ROC_score = numpy.abs(numpy.trapz(TP_rate, x=FP_rate ))
-    # shuffled ROc
+    # shuffled ROC
     
     ROC_bootstrap = 0
     for j in range(n_boot):
         
-        # shuffle observations / events
+#        # shuffle observations / events
+#        old_index = range(0,len(observed),1)
+#        sample_index = random.sample(old_index, len(old_index))
+        
+        # shuffle years, but keep years complete:
         old_index = range(0,len(observed),1)
-                
-        sample_index = random.sample(old_index, len(old_index))
+#        n_yr = ex['n_yrs']
+        n_oneyr = int( len(observed) / ex['n_yrs'])
+        chunks = [old_index[n_oneyr*i:n_oneyr*(i+1)] for i in range(int(len(old_index)/n_oneyr))]
+        # replace lost value because of python indexing 
+#        chunks[-1] = range(chunks[-1][0], chunks[-1][-1])
+        rand_chunks = random.sample(chunks, len(chunks))
         #print(sample_index)
-        new_observed = observed[sample_index]    
+#        new_observed = np.reshape(observed[sample_index], -1)  
+        
+        new_observed = []
+        for chunk in rand_chunks:
+            new_observed.append( observed[chunk] )
+        
+        new_observed = np.reshape( new_observed, -1)
         # _____________________________________________________________________________
         # calculate new AUC score and store it
         # _____________________________________________________________________________

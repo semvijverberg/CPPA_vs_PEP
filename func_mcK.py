@@ -159,13 +159,15 @@ def extract_precursor(train, test, ex):
     pattern_num = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='communities_numbered', 
                           attrs={'units':'regions'})
-    
-#    array = np.zeros( (len(ex['lags'])) )
-#    logit_model = xr.DataArray(data=array, coords=[ex['lags'], [0]], 
-#                          dims=['lag', 'model'], name='logitmodel',
-#                          attrs={'units':'[-]'})
-#    
+
+    array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
+    pattern_num_init = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+                          dims=['lag','latitude','longitude'], name='commun_numb_init', 
+                          attrs={'units':'regions'})
+     
     logit_model = []
+    
+    ex['ts_train_std'] = []
     
     combs_reg_kept = np.zeros( len(ex['lags']), dtype=list)
     
@@ -196,11 +198,12 @@ def extract_precursor(train, test, ex):
         composite = train['Prec'].sel(time=events_min_lag)
         #%%
         # extract communities
-        pattern_atlag, commun_numbered, combs_kept, logitmodel_lag_i = extract_commun(
+        pattern_atlag, comm_numb, commun_init, combs_kept, logitmodel_lag_i = extract_commun(
                                                 composite, ts_3d, binary_events, ex)  
         
         pattern[idx] = pattern_atlag
-        pattern_num[idx]  = commun_numbered
+        pattern_num[idx]  = comm_numb
+        pattern_num_init[idx] = commun_init
         combs_reg_kept[idx] = combs_kept
         logit_model.append( logitmodel_lag_i )
         
@@ -215,6 +218,7 @@ def extract_precursor(train, test, ex):
             p_pred.append(np.percentile(crosscorr_Sem.values, p*10))
         pattern_p[idx] = p_pred
     ds_Sem = xr.Dataset( {'pattern' : pattern, 'pattern_num' : pattern_num, 
+                          'pattern_num_init' : pattern_num_init,
                           'logitmodel' : logit_model, 'combs_kept' : combs_reg_kept,
                           'perc' : pattern_p} )
         
@@ -317,21 +321,21 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     
 
     ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                         regions_for_ts, ts_3d_trainwghts, Corr_Coeff)
+                                         regions_for_ts, ts_3d_trainwghts, Corr_Coeff)[:2]
 
     # reshape to latlon grid
     npmap = np.reshape(Regions_lag_i, (lat_grid.size, lon_grid.size))
     mask_strongest = (npmap!=0) 
     npmap[mask_strongest==False] = 0
-    xrnpmap = mean.copy()
-    xrnpmap.values = npmap
+    xrnpmap_init = mean.copy()
+    xrnpmap_init.values = npmap
     
     mask = (('latitude', 'longitude'), mask_strongest)
     mean.coords['mask'] = mask
-    xrnpmap.coords['mask'] = mask
-    xrnpmap = xrnpmap.where(xrnpmap.mask==True)
+    xrnpmap_init.coords['mask'] = mask
+    xrnpmap_init = xrnpmap_init.where(xrnpmap_init.mask==True)
 #    plt.figure()
-#    xrnpmap.plot.contourf(cmap=plt.cm.tab10)   
+#    xrnpmap_init.plot.contourf(cmap=plt.cm.tab10)   
 #%%
     # get wgths and only regions that contributed to probability    
     if ex['new_model_sel'] == False:
@@ -383,8 +387,355 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 #    plt.figure() 
 #    weighted_mean.plot.contourf()
     #%%
-    return weighted_mean, xrnpmap, combs_kept, logitmodel
+    return weighted_mean, xrnpmap, xrnpmap_init, combs_kept, logitmodel
 
+
+
+def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
+    #%%
+#    from sklearn.linear_model import LogisticRegression
+#    from sklearn.model_selection import train_test_split
+    import statsmodels.api as sm
+    import itertools
+    # I want to the importance of each regions as is shown in the composite plot
+    # A region will increase the probability of the events when it the coef_ is 
+    # higher then 1. This means that if the ts shows high values, we have a higher 
+    # probability of the events. To ease interpretability I will multiple each ts
+    # with the sign of the region, to that each params should be above one (higher
+    # coef_, higher probability of events)
+    n_feat = len(ts_regions_lag_i[0])
+    n_samples = len(ts_regions_lag_i[:,0])
+
+    regions          = np.arange(1, n_feat + 1)   
+    track_super_sign = np.arange(1, n_feat + 1)   
+    track_r_kept     = np.arange(1, n_feat + 1)
+    signs = sign_ts_regions
+       
+    
+#    regs_for_interac = np.arange(1, n_feat + 1)
+    ex['std_of_initial_ts'] = np.std(ts_regions_lag_i, axis=0) #!!
+    X_init = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0) #!!
+    y = binary_events
+#    X_train, X_test, y_train, y_test = train_test_split(
+#                                   X[:,:], y, test_size=0.33)
+    # =============================================================================
+    # Step 1: Preselection 
+    # =============================================================================
+    # first kick out regions which do not show any relation to the event 
+    # i.e. low p-value
+    X = X_init
+    all_regions_significant = True
+    i = 0
+    init_vs_final_bic = [] #np.zeros( (len(ex['lags'])) , dtype=list)
+    while all_regions_significant:
+        X_train = X * signs[None,:]
+        y_train = y
+
+        logit_model=sm.Logit(y_train,X_train)
+        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+        if i == 0:
+#            print('initial bic value {}'.format(result.bic))
+            init_vs_final_bic.append(result.bic)
+        if result.mle_retvals['converged'] == False:
+            print('logistic regression did not converge, taking odds of prev'
+                  'iteration or - if not present -, all odds (wghts) are equal')
+            try:
+                # capture odds array of previous iteration
+                odds = odds
+            except NameError as error:
+                # if odds in not defined, then it has never converged and there
+                # are no odds available, set all odds (wghts) to 1
+                odds = np.ones(len(n_feat))
+                
+        elif result.mle_retvals['converged'] == True:
+            odds = np.exp(result.params)
+    #        print('statsmodel logit Odds of event happening conditioned on X (p / (1+p) = exp(params) \n{}\n'.format(odds))
+#            print(result.summary2())
+            p_vals = result.pvalues
+            mask_really_insig = (p_vals >= ex['pval_logit_first'])
+            regions_not_sign = np.where(mask_really_insig)[0]
+                    
+            # update regions accounted for in fit
+            X = np.delete(X, regions_not_sign, axis=1)
+            track_r_kept = np.delete(track_r_kept, regions_not_sign)
+            
+            signs  = np.delete(signs, regions_not_sign, axis=0)
+        
+                                        
+            if len(regions_not_sign) == 0:
+                all_regions_significant = False
+        i += 1
+#    print(result.summary2())
+
+    # regions to be futher investigated before throwing out
+    mask_not_super_sig = (p_vals >= ex['pval_logit_final'])
+    idx_not_super_sig = (np.where(mask_not_super_sig)[0])
+    track_super_sign = np.delete(track_r_kept, idx_not_super_sig)
+    regs_for_interac = [i for i in track_r_kept if i not in track_super_sign]
+#%% 
+    # =============================================================================
+    # Step 2: Check 'intermediate regions' should be kicked out
+    # =============================================================================
+    # Perform logistic regression on combination of two with the regions that were
+    # 'not super sign' (pval < ex['pval_logit_final'])
+    
+    if len(regs_for_interac) != 0:
+        # check if regions deleted do not have an interacting component
+        combi = list(itertools.product([0, 1], repeat=n_feat))[1:]
+        comb_int = [c for c in combi if np.sum(c)==2]
+        weak_p = []
+        for c in comb_int:
+            idx_f = np.where(np.array(c) == 1)[0]
+            # add 1 to get number of region
+            idx_f += 1
+            for i in regs_for_interac:
+                if i in list(idx_f):   
+    #                print(True)
+                    weak_p.append(c) 
+        
+        # remove duplicates in weak_p
+        def remove_duplicates(seq):
+            seen = set()
+            seen_add = seen.add
+            return [x for x in seq if not (x in seen or seen_add(x))]
+        
+        weak_p = remove_duplicates(weak_p)
+        
+        X_train_cl = X_init
+        X_train_cl = X_train_cl * sign_ts_regions[None,:]
+        # add interaction time series
+        combregions = []
+        ts_regions_interaction = np.zeros( (n_samples, len(weak_p)) )
+        for comb in weak_p:
+            i = weak_p.index(comb)
+            idx_f = np.where(np.array(comb) == 1)[0]
+            two_ts = X_train_cl[:,idx_f]
+            ts_regions_interaction[:,i] = two_ts[:,0] * two_ts[:,1]
+            combregions.append(idx_f+1)
+        
+        X_inter = ts_regions_interaction / np.std(ts_regions_interaction, axis=0)
+        y_train = y
+    
+        logit_model=sm.Logit(y_train,X_inter)
+        result_inter = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+        p_vals = result_inter.pvalues 
+        odds_interac   = np.exp(result_inter.params)
+        mask_cregions_keeping = (p_vals <= ex['pval_logit_final']) #* (odds > 1.)
+        cregions_sign_idx = list(np.where(mask_cregions_keeping)[0])
+        cregions_sign = np.array(combregions)[cregions_sign_idx]
+        result_inter.summary2()
+        if len(cregions_sign_idx)==0.:
+            # delete regions that are not kept after testing if they got good enough
+            # p_vals
+            idx_not_keeping = [list(track_r_kept).index(4) for i in regs_for_interac]
+            track_r_kept    = np.delete(track_r_kept, idx_not_keeping)
+        else:
+            # =============================================================================
+            # test if combination of regions is truly giving a better p_val then when it 
+            # is taken as a single region
+            # =============================================================================
+            
+            keep_duetointer = []
+            comb_sign_r = set(cregions_sign.flatten())
+            comb_sign_ind = [i for i in comb_sign_r if i not in regs_for_interac]
+            comb_sign_ind_idx = [i-1 for i in comb_sign_ind if i in regions]
+            X_invol_inter = X_init
+            X_invol_inter = X_invol_inter * sign_ts_regions[None,:]
+            X_invol_inter = X_invol_inter[:,comb_sign_ind_idx]
+            
+            ts_r_int_sign = ts_regions_interaction[:,cregions_sign_idx]
+            
+            X_sing_inter = np.concatenate((X_invol_inter, ts_r_int_sign), axis=1)
+            
+            logit_model=sm.Logit(y_train,X_sing_inter)
+            result_int_test = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+            odds_sin_inter = np.exp(result_int_test.params)
+            p_vals = result_int_test.pvalues 
+            n_sign_single = len(comb_sign_ind_idx)
+            p_vals_single = p_vals[:n_sign_single]
+            odds_single   = odds_sin_inter[:n_sign_single]
+            odds_inter    = odds_sin_inter[n_sign_single:]
+            p_vals_inter  = p_vals[n_sign_single:]
+            for i in range(len(p_vals_inter)):
+                p_val_inter = p_vals_inter[i]
+                # interacting with
+                comb_r = [t for t in cregions_sign[i]]
+                # check p_value of perhaps two regions which were tested for interaction
+                if all(elem in regs_for_interac  for elem in comb_r): 
+                    p_val = p_vals_inter[i]
+                    if p_val < ex['pval_logit_final'] and odds_inter[i] > 1.0:
+#                        print('p_val inter two weak regions : {}'.format(p_val))
+                        keep_duetointer.append(comb_r)
+                        # the regions are kept into track_r_kept
+                        
+                    
+                else:
+                    # a 'single' region investigated for interaction with region
+                    # which showed not a very significant p_val
+                    reg_investigated = [i for i in comb_r if i in regs_for_interac]
+                    reg_individual = [i for i in comb_r if i not in regs_for_interac]
+                    idx_sign_single = comb_sign_ind.index(reg_individual)
+                    p_val_inter  = p_vals_inter[i]
+                    p_val_single = p_vals_single[idx_sign_single]
+                    odds_int     = odds_inter[i]
+                    odds_sin     = odds_single[idx_sign_single]
+                    if p_val_inter < p_val_single and odds_int > odds_sin:
+#                        print('p_val_inter : {}\np_val_single {}'.format(
+#                                p_val_inter, p_val_single))
+                        if p_val_inter < ex['pval_logit_final']:
+                            keep_duetointer.append(reg_investigated)
+                        
+            keep_duetointer = [i for i in keep_duetointer]
+            
+            # delete regions that are not kept after testing if they got good enough
+            # p_vals
+            flat_keeping = list(set([item for sublist in keep_duetointer for item in sublist]))
+            idx_not_keeping = [i for i in reg_investigated if i not in flat_keeping]
+            track_r_kept    = np.delete(track_r_kept, idx_not_keeping)
+        
+            # if it adds likelihood when reg_investiged interacts with reg_single, 
+            # then I keep both reg_investiged and reg_single in as single predictors
+            # if two reg_investigated became significant together, then I will keep 
+            # them in as an 'interacting time series' reg1 * reg2 = predictor.
+            if (regs_for_interac in keep_duetointer) and len(regs_for_interac)==2:
+                add_pred_inter = [i for i in keep_duetointer if all(np.equal(i, regs_for_interac))][0]
+                idx_pred_inter = [i for i in range(n_feat) if regions[i] in add_pred_inter]
+                ts_inter_kept   = ts_regions_lag_i[:,idx_pred_inter[0]] * ts_regions_lag_i[:,idx_pred_inter[1]]
+                X_inter_kept = ts_inter_kept[:,None] / np.std(ts_inter_kept[:,None], axis = 0)
+#            
+#                X_final = np.concatenate( (X_train, X_inter_kept), axis=1)
+#            else:
+#                X_final = X_train
+    # =============================================================================
+    # Step 3 Perform log regression on (individual) regions that past step 1 & 2.
+    # =============================================================================
+    # all regions
+    X = X_init
+    # select only region in track_regions_kept:
+    r_kept_idx = [i-1 for i in regions if i in track_r_kept]
+    sign_r_kept = sign_ts_regions[None,r_kept_idx]
+    ts_r_kept   = ts_regions_lag_i[None,r_kept_idx]
+    ex['ts_train_std'].append(np.std(ts_regions_lag_i[:,r_kept_idx], axis=0))
+    X_final = X[:,r_kept_idx] * sign_r_kept
+    logit_model=sm.Logit(y_train,X_final)
+    result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+    odds   = np.exp(result.params)
+    p_vals = result.pvalues 
+    #        print(result.summary2())
+            
+#            odds_new = odds_new[:len(track_r_kept)]
+    logitmodel = result
+#    print('final bic value {}'.format(logitmodel.bic))
+    init_vs_final_bic.append(logitmodel.bic)
+        
+#    results = pd.DataFrame(columns=['aic', 'aicc', 'bic', 'p_vals'])
+#    for comb in combinations:
+##        idx = combinations.index(comb)
+#        idx_f = np.where(np.array(comb) == 1)[0]
+#        X_train = X[:,idx_f] * signs[None,idx_f]
+#        y_train = y
+#        
+#        logit_model=sm.Logit(y_train,X_train)
+#        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+#        aicc = result.aic + (2*n_feat**2 + 2*n_feat) / (n_samples - n_feat -1)
+#        pd_out = pd.Series( [ result.aic, aicc, result.bic, result.pvalues ], 
+#                           index=results.columns )
+#        results = results.append(pd_out, ignore_index=True)
+#    # select model with lowest AIC
+#    min_aic = results[results.aic == results.aic.min()].aic.values
+#    for idx in range(len(results)):
+#        rel_likely = np.exp(min_aic-)
+    
+    #%%        
+    return odds, track_r_kept, sign_r_kept, logitmodel
+
+def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
+    #%%
+    n_time   = ts_3d.time.size
+    lat_grid = ts_3d.latitude
+    lon_grid = ts_3d.longitude
+    regions_for_ts = list(regions_for_ts)
+    
+    actbox = np.reshape(ts_3d.values, (n_time, 
+                  lat_grid.size*lon_grid.size))  
+    
+    # get lonlat array of area for taking spatial means 
+    lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
+    cos_box = np.cos(np.deg2rad(lats_gph))
+    cos_box_array = np.repeat(cos_box[None,:], actbox.shape[0], 0)
+    cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
+    
+
+    # this array will be the time series for each feature
+    ts_regions_lag_i = np.zeros((actbox.shape[0], len(regions_for_ts)))
+    
+    # track sign of eacht region
+    sign_ts_regions = np.zeros( len(regions_for_ts) )
+    
+    # std regions
+    std_regions     = np.zeros( (len(regions_for_ts)) )
+    
+    if len(Regions_lag_i.shape) == 1.:
+        Regions = Regions_lag_i
+    elif len(Regions_lag_i.shape) == 2.:
+        Regions = np.reshape(Regions_lag_i, (Regions_lag_i.size))
+    # calculate area-weighted mean over features
+    for r in regions_for_ts:
+        idx = regions_for_ts.index(r)
+        # start with empty lonlat array
+        B = np.zeros(Regions.shape)
+        # Mask everything except region of interest
+        B[Regions == r] = 1	
+        # Calculates how values inside region vary over time
+        ts_regions_lag_i[:,idx] = np.mean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
+        # get sign of region
+        sign_ts_regions[idx] = np.sign(np.mean(mean[B==1]))
+#    print(sign_ts_regions)
+        
+    std_regions = np.std(ts_regions_lag_i, axis=0)
+    #%%
+    return ts_regions_lag_i, sign_ts_regions, std_regions
+
+
+def timeseries_for_test(ds_Sem, test, ex):
+    
+    time = test['RV'].time
+    
+    array = np.zeros( (len(ex['lags']), len(time)) )
+    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time], 
+                          dims=['lag','time'], name='ts_predict_logit',
+                          attrs={'units':'Kelvin'})
+    
+    for lag in ex['lags']:
+        idx = ex['lags'].index(lag)
+        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+                                           test['Prec'].time[0].dt.hour)
+        # select antecedant SST pattern to summer days:
+        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
+        var_test_mcK = find_region(test['Prec'], region='PEPrectangle')[0]
+    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+    
+        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
+        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
+        mean = ds_Sem['pattern'].sel(lag=lag)
+        mean = np.reshape(mean.values, (mean.size))
+
+        xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
+        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
+        
+        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
+                        xrpattern_lag_i.values, regions_for_ts, 
+                        var_test_reg, mean)[:2]
+        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
+        # normalize time series (as done in the training)        
+        X_n = ts_regions_lag_i / ex['ts_train_std'][idx]
+        
+        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
+        ts_pred = logit_model_lag_i.predict(X_n)
+        ts_predic[idx] = ts_pred
+    
+    ds_Sem['ts_prediction'] = ts_predic
+    return ds_Sem
 
 
 def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
@@ -571,309 +922,11 @@ def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, e
     # update combs_kept, region numbers are changed further up to 1,2,3, etc..
     del_zeros = np.sum(combs_kept,axis=0) >= 1
     combs_kept_new = [tuple(np.array(c)[del_zeros]) for c in combs_kept ]
+    # store std of regions that were kept
+    
     #%%
     return B_coeff, track_r_kept, combs_kept_new, final_model
 
-
-
-def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
-    #%%
-#    from sklearn.linear_model import LogisticRegression
-#    from sklearn.model_selection import train_test_split
-    import statsmodels.api as sm
-    import itertools
-    # I want to the importance of each regions as is shown in the composite plot
-    # A region will increase the probability of the events when it the coef_ is 
-    # higher then 1. This means that if the ts shows high values, we have a higher 
-    # probability of the events. To ease interpretability I will multiple each ts
-    # with the sign of the region, to that each params should be above one (higher
-    # coef_, higher probability of events)
-    n_feat = len(ts_regions_lag_i[0])
-    n_samples = len(ts_regions_lag_i[:,0])
-
-    regions          = np.arange(1, n_feat + 1)   
-    track_super_sign = np.arange(1, n_feat + 1)   
-    track_r_kept     = np.arange(1, n_feat + 1)
-    signs = sign_ts_regions
-       
-    
-#    regs_for_interac = np.arange(1, n_feat + 1)
-    X = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0) #!!!
-#    X = ts_regions_lag_i
-    y = binary_events
-#    X_train, X_test, y_train, y_test = train_test_split(
-#                                   X[:,:], y, test_size=0.33)
-    # =============================================================================
-    # Step 1: Preselection 
-    # =============================================================================
-    # first kick out regions which do not show any relation to the event 
-    # i.e. low p-value
-    all_regions_significant = True
-    i = 0
-    init_vs_final_bic = [] #np.zeros( (len(ex['lags'])) , dtype=list)
-    while all_regions_significant:
-        X_train = X * signs[None,:]
-        y_train = y
-
-        logit_model=sm.Logit(y_train,X_train)
-        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-        if i == 0:
-#            print('initial bic value {}'.format(result.bic))
-            init_vs_final_bic.append(result.bic)
-        if result.mle_retvals['converged'] == False:
-            print('logistic regression did not converge, taking odds of prev'
-                  'iteration or - if not present -, all odds (wghts) are equal')
-            try:
-                # capture odds array of previous iteration
-                odds = odds
-            except NameError as error:
-                # if odds in not defined, then it has never converged and there
-                # are no odds available, set all odds (wghts) to 1
-                odds = np.ones(len(n_feat))
-                
-        elif result.mle_retvals['converged'] == True:
-            odds = np.exp(result.params)
-    #        print('statsmodel logit Odds of event happening conditioned on X (p / (1+p) = exp(params) \n{}\n'.format(odds))
-#            print(result.summary2())
-            p_vals = result.pvalues
-            mask_really_insig = (p_vals >= ex['pval_logit_first'])
-            regions_not_sign = np.where(mask_really_insig)[0]
-                    
-            # update regions accounted for in fit
-            X = np.delete(X, regions_not_sign, axis=1)
-            track_r_kept = np.delete(track_r_kept, regions_not_sign)
-            
-            signs  = np.delete(signs, regions_not_sign, axis=0)
-        
-                                        
-            if len(regions_not_sign) == 0:
-                all_regions_significant = False
-        i += 1
-#    print(result.summary2())
-
-    # regions to be futher investigated before throwing out
-    mask_not_super_sig = (p_vals >= ex['pval_logit_final'])
-    idx_not_super_sig = (np.where(mask_not_super_sig)[0])
-    track_super_sign = np.delete(track_r_kept, idx_not_super_sig)
-    regs_for_interac = [i for i in track_r_kept if i not in track_super_sign]
-#%% 
-    # =============================================================================
-    # Step 2: Check 'intermediate regions' should be kicked out
-    # =============================================================================
-    # Perform logistic regression on combination of two with the regions that were
-    # 'not super sign' (pval < ex['pval_logit_final'])
-    
-    if len(regs_for_interac) != 0:
-        # check if regions deleted do not have an interacting component
-        combi = list(itertools.product([0, 1], repeat=n_feat))[1:]
-        comb_int = [c for c in combi if np.sum(c)==2]
-        weak_p = []
-        for c in comb_int:
-            idx_f = np.where(np.array(c) == 1)[0]
-            # add 1 to get number of region
-            idx_f += 1
-            for i in regs_for_interac:
-                if i in list(idx_f):   
-    #                print(True)
-                    weak_p.append(c) 
-        
-        # remove duplicates in weak_p
-        def remove_duplicates(seq):
-            seen = set()
-            seen_add = seen.add
-            return [x for x in seq if not (x in seen or seen_add(x))]
-        
-        weak_p = remove_duplicates(weak_p)
-        
-        X_train_cl = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
-        X_train_cl = X_train_cl * sign_ts_regions[None,:]
-        # add interaction time series
-        combregions = []
-        ts_regions_interaction = np.zeros( (n_samples, len(weak_p)) )
-        for comb in weak_p:
-            i = weak_p.index(comb)
-            idx_f = np.where(np.array(comb) == 1)[0]
-            two_ts = X_train_cl[:,idx_f]
-            ts_regions_interaction[:,i] = two_ts[:,0] * two_ts[:,1]
-            combregions.append(idx_f+1)
-        
-        X_inter = ts_regions_interaction / np.std(ts_regions_interaction, axis=0)
-        y_train = y
-    
-        logit_model=sm.Logit(y_train,X_inter)
-        result_inter = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-        p_vals = result_inter.pvalues 
-        odds_interac   = np.exp(result_inter.params)
-        mask_cregions_keeping = (p_vals <= ex['pval_logit_final']) #* (odds > 1.)
-        cregions_sign_idx = list(np.where(mask_cregions_keeping)[0])
-        cregions_sign = np.array(combregions)[cregions_sign_idx]
-        result_inter.summary2()
-        if len(cregions_sign_idx)==0.:
-            # delete regions that are not kept after testing if they got good enough
-            # p_vals
-            idx_not_keeping = [list(track_r_kept).index(4) for i in regs_for_interac]
-            track_r_kept    = np.delete(track_r_kept, idx_not_keeping)
-        else:
-            # =============================================================================
-            # test if combination of regions is truly giving a better p_val then when it 
-            # is taken as a single region
-            # =============================================================================
-            
-            keep_duetointer = []
-            comb_sign_r = set(cregions_sign.flatten())
-            comb_sign_ind = [i for i in comb_sign_r if i not in regs_for_interac]
-            comb_sign_ind_idx = [i-1 for i in comb_sign_ind if i in regions]
-            X_invol_inter = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
-            X_invol_inter = X_invol_inter * sign_ts_regions[None,:]
-            X_invol_inter = X_invol_inter[:,comb_sign_ind_idx]
-            
-            ts_r_int_sign = ts_regions_interaction[:,cregions_sign_idx]
-            
-            X_sing_inter = np.concatenate((X_invol_inter, ts_r_int_sign), axis=1)
-            
-            logit_model=sm.Logit(y_train,X_sing_inter)
-            result_int_test = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-            odds_sin_inter = np.exp(result_int_test.params)
-            p_vals = result_int_test.pvalues 
-            n_sign_single = len(comb_sign_ind_idx)
-            p_vals_single = p_vals[:n_sign_single]
-            odds_single   = odds_sin_inter[:n_sign_single]
-            odds_inter    = odds_sin_inter[n_sign_single:]
-            p_vals_inter  = p_vals[n_sign_single:]
-            for i in range(len(p_vals_inter)):
-                p_val_inter = p_vals_inter[i]
-                # interacting with
-                comb_r = [t for t in cregions_sign[i]]
-                # check p_value of perhaps two regions which were tested for interaction
-                if all(elem in regs_for_interac  for elem in comb_r): 
-                    p_val = p_vals_inter[i]
-                    if p_val < ex['pval_logit_final'] and odds_inter[i] > 1.0:
-#                        print('p_val inter two weak regions : {}'.format(p_val))
-                        keep_duetointer.append(comb_r)
-                        # the regions are kept into track_r_kept
-                        
-                    
-                else:
-                    # a 'single' region investigated for interaction with region
-                    # which showed not a very significant p_val
-                    reg_investigated = [i for i in comb_r if i in regs_for_interac]
-                    reg_individual = [i for i in comb_r if i not in regs_for_interac]
-                    idx_sign_single = comb_sign_ind.index(reg_individual)
-                    p_val_inter  = p_vals_inter[i]
-                    p_val_single = p_vals_single[idx_sign_single]
-                    odds_int     = odds_inter[i]
-                    odds_sin     = odds_single[idx_sign_single]
-                    if p_val_inter < p_val_single and odds_int > odds_sin:
-#                        print('p_val_inter : {}\np_val_single {}'.format(
-#                                p_val_inter, p_val_single))
-                        if p_val_inter < ex['pval_logit_final']:
-                            keep_duetointer.append(reg_investigated)
-                        
-            keep_duetointer = [i for i in keep_duetointer]
-            
-            # delete regions that are not kept after testing if they got good enough
-            # p_vals
-            flat_keeping = list(set([item for sublist in keep_duetointer for item in sublist]))
-            idx_not_keeping = [i for i in reg_investigated if i not in flat_keeping]
-            track_r_kept    = np.delete(track_r_kept, idx_not_keeping)
-        
-            # if it adds likelihood when reg_investiged interacts with reg_single, 
-            # then I keep both reg_investiged and reg_single in as single predictors
-            # if two reg_investigated became significant together, then I will keep 
-            # them in as an 'interacting time series' reg1 * reg2 = predictor.
-            if (regs_for_interac in keep_duetointer) and len(regs_for_interac)==2:
-                add_pred_inter = [i for i in keep_duetointer if all(np.equal(i, regs_for_interac))][0]
-                idx_pred_inter = [i for i in range(n_feat) if regions[i] in add_pred_inter]
-                ts_inter_kept   = ts_regions_lag_i[:,idx_pred_inter[0]] * ts_regions_lag_i[:,idx_pred_inter[1]]
-                X_inter_kept = ts_inter_kept[:,None] / np.std(ts_inter_kept[:,None], axis = 0)
-#            
-#                X_final = np.concatenate( (X_train, X_inter_kept), axis=1)
-#            else:
-#                X_final = X_train
-    # =============================================================================
-    # Step 3 Perform log regression on (individual) regions that past step 1 & 2.
-    # =============================================================================
-    # all regions
-    X = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
-    # select only region in track_regions_kept:
-    r_kept_idx = [i-1 for i in regions if i in track_r_kept]
-    sign_r_kept = sign_ts_regions[None,r_kept_idx]
-    X_final = X[:,r_kept_idx] * sign_r_kept
-    logit_model=sm.Logit(y_train,X_final)
-    result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-    odds   = np.exp(result.params)
-    p_vals = result.pvalues 
-    #        print(result.summary2())
-            
-#            odds_new = odds_new[:len(track_r_kept)]
-    logitmodel = result
-#    print('final bic value {}'.format(logitmodel.bic))
-    init_vs_final_bic.append(logitmodel.bic)
-        
-#    results = pd.DataFrame(columns=['aic', 'aicc', 'bic', 'p_vals'])
-#    for comb in combinations:
-##        idx = combinations.index(comb)
-#        idx_f = np.where(np.array(comb) == 1)[0]
-#        X_train = X[:,idx_f] * signs[None,idx_f]
-#        y_train = y
-#        
-#        logit_model=sm.Logit(y_train,X_train)
-#        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-#        aicc = result.aic + (2*n_feat**2 + 2*n_feat) / (n_samples - n_feat -1)
-#        pd_out = pd.Series( [ result.aic, aicc, result.bic, result.pvalues ], 
-#                           index=results.columns )
-#        results = results.append(pd_out, ignore_index=True)
-#    # select model with lowest AIC
-#    min_aic = results[results.aic == results.aic.min()].aic.values
-#    for idx in range(len(results)):
-#        rel_likely = np.exp(min_aic-)
-    
-    #%%        
-    return odds, track_r_kept, sign_r_kept, logitmodel
-
-def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
-    
-    n_time   = ts_3d.time.size
-    lat_grid = ts_3d.latitude
-    lon_grid = ts_3d.longitude
-    regions_for_ts = list(regions_for_ts)
-    
-    actbox = np.reshape(ts_3d.values, (n_time, 
-                  lat_grid.size*lon_grid.size))  
-    
-    # get lonlat array of area for taking spatial means 
-    lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
-    cos_box = np.cos(np.deg2rad(lats_gph))
-    cos_box_array = np.repeat(cos_box[None,:], actbox.shape[0], 0)
-    cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
-    
-
-    # this array will be the time series for each feature
-    ts_regions_lag_i = np.zeros((actbox.shape[0], len(regions_for_ts)))
-    
-    # track sign of eacht region
-    sign_ts_regions = np.zeros( len(regions_for_ts) )
-    
-    
-    if len(Regions_lag_i.shape) == 1.:
-        Regions = Regions_lag_i
-    elif len(Regions_lag_i.shape) == 2.:
-        Regions = np.reshape(Regions_lag_i, (Regions_lag_i.size))
-    # calculate area-weighted mean over features
-    for r in regions_for_ts:
-        idx = regions_for_ts.index(r)
-        # start with empty lonlat array
-        B = np.zeros(Regions.shape)
-        # Mask everything except region of interest
-        B[Regions == r] = 1	
-        # Calculates how values inside region vary over time
-        ts_regions_lag_i[:,idx] = np.mean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
-        # get sign of region
-        sign_ts_regions[idx] = np.sign(np.mean(mean[B==1]))
-#    print(sign_ts_regions)
-
-
-    return ts_regions_lag_i, sign_ts_regions
 
 
 def NEW_timeseries_for_test(ds_Sem, test, ex):
@@ -930,45 +983,7 @@ def NEW_timeseries_for_test(ds_Sem, test, ex):
     return ds_Sem
 
 
-def timeseries_for_test(ds_Sem, test, ex):
-    
-    time = test['RV'].time
-    
-    array = np.zeros( (len(ex['lags']), len(time)) )
-    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time], 
-                          dims=['lag','time'], name='ts_predict_logit',
-                          attrs={'units':'Kelvin'})
-    
-    for lag in ex['lags']:
-        idx = ex['lags'].index(lag)
-        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
-                                           test['Prec'].time[0].dt.hour)
-        # select antecedant SST pattern to summer days:
-        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = find_region(test['Prec'], region='PEPrectangle')[0]
-    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
-    
-        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
-        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
-        mean = ds_Sem['pattern'].sel(lag=lag)
-        mean = np.reshape(mean.values, (mean.size))
 
-        xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
-        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
-        
-        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
-                        xrpattern_lag_i.values, regions_for_ts, 
-                        var_test_reg, mean)
-        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
-        # normalize time series (as done in the training)        
-        X_n = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
-        
-        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
-        ts_pred = logit_model_lag_i.predict(X_n)
-        ts_predic[idx] = ts_pred
-    
-    ds_Sem['ts_prediction'] = ts_predic
-    return ds_Sem
         
 #def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
 #    #%%
@@ -1691,7 +1706,7 @@ def find_region(data, region='Mckinnonplot'):
 
 
 def cross_correlation_patterns(full_timeserie, pattern):
-#    full_timeserie = precursor
+#    full_timeserie = ts_3d
 #    pattern = pattern_atlag
     mask = np.ma.make_mask(np.isnan(pattern.values)==False)
     
