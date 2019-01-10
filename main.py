@@ -155,7 +155,7 @@ ex['lags'] =   [1,2]  # [6] # [0, 6, 12, 18]
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
-ex['n_std'] = 1.5   
+ex['perc_map'] = 95  
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
 if ex['leave_n_out'] == True and ex['method'] == 'iter':
@@ -172,7 +172,7 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'sstartdate', 'senddate', 'n_conv', 'leave_n_out',
             'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
-            'n_std', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
+            'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
             'use_ts_logit', 'pval_logit_first', 'pval_logit_final',
             'mcKthres', 'new_model_sel']
 

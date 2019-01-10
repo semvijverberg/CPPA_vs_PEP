@@ -195,11 +195,10 @@ def extract_precursor(train, test, ex):
         binary_events = np.zeros(dates_train.size)    
         binary_events[event_idx] = 1
         ts_3d = train['Prec'].sel(time=dates_train_min_lag)
-        composite = train['Prec'].sel(time=events_min_lag)
         #%%
         # extract communities
         pattern_atlag, comm_numb, commun_init, combs_kept, logitmodel_lag_i = extract_commun(
-                                                composite, ts_3d, binary_events, ex)  
+                                                events_min_lag, ts_3d, binary_events, ex)  
         
         pattern[idx] = pattern_atlag
         pattern_num[idx]  = comm_numb
@@ -232,7 +231,7 @@ def extract_precursor(train, test, ex):
 # =============================================================================
 # =============================================================================
 
-def extract_commun(composite, ts_3d, binary_events, ex):
+def extract_commun(events_min_lag, ts_3d, binary_events, ex):
     x=0
 #    T, pval, mask_sig = Welchs_t_test(sample, full, alpha=0.01)
 #    threshold = np.reshape( mask_sig, (mask_sig.size) )
@@ -241,10 +240,13 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 #    plt.imshow(mask_sig)
     # divide train set into train-feature and train-weights part:
 #%% 
+    lats = ts_3d.latitude
+    lons = ts_3d.longitude
     full_years  = list(ts_3d.time.dt.year.values)
-    comp_years = list(composite.time.dt.year.values)
+    comp_years = list(events_min_lag.time.dt.year.values)
     
     all_yrs_set = list(set(ts_3d.time.dt.year.values))
+    
     randyrs_trainfeat = np.random.choice(all_yrs_set, int(len(all_yrs_set)/2), replace=False)
     randyrs_trainwgts = [yr for yr in all_yrs_set if yr not in randyrs_trainfeat]
 
@@ -255,6 +257,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 
     # composite taken only over train feature part
     if ex['splittrainfeat'] == True:
+        composite = ts_3d.sel(time=events_min_lag)
         mean = composite.isel(time=yrs_trainfeat).mean(dim='time')
         # ts_3d only for train-weights part
         ts_3d_trainwghts = ts_3d.isel(time=yrs_trainwghts)
@@ -264,32 +267,78 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     else:
         ts_3d_trainwghts = ts_3d
         bin_event_trainwghts = binary_events
-        mean = composite.mean(dim='time')
-    
-    
-    if ex['wghts_std_anom'] == True: 
-        # get a feeling for the variation within the composite, if anomalies are 
-        # persistent they are assigned with a heavier weight
-        std_lag =  ts_3d_trainwghts.std(dim='time')
-    #    std_lag.plot()
-        # smoothen field
+        # iterative leave one year out
+#        array = np.zeros( (len(all_yrs_set), len(lats), len(lons)) )
+#        iter_mean = xr.DataArray(data=array, coords=[all_yrs_set, lats, lons], 
+#                          dims=['yrs','latitude','longitude'], name='iter_mean')
         
-    #    std_lag.where(std_lag.values < 0.1*std_lag.std().values)
-    #    std_lag.plot()
-    #    std_lag = rolling_mean_xr(std_lag, 3)
         
-        StoN = abs(mean/std_lag)
-        StoN = StoN / np.mean(StoN)
-    #    StoN = StoN.where(StoN.values < 10*StoN.median().values)
-    #    StoN.plot()
-        StoN_wghts = mean*StoN
-        mean = StoN_wghts
+        iter_regions = np.zeros( (len(all_yrs_set), ts_3d[0].size))
+        
+        for yr in all_yrs_set:
+            idx = all_yrs_set.index(yr)
+            yrs_trainfeat =  [i for i in all_yrs_set if i != yr] 
+            # exclude year in ts_3d 
+#            one_out_idx_ts = [i for i in range(len(full_years) ) if full_years[i] in yrs_trainfeat]
+#            ts_3d_trainwghts = ts_3d.isel(time=one_out_idx_ts)
+            
+            # exclude year in event time series
+            one_out_idx_ev = [i for i in range(len(comp_years) ) if comp_years[i] in yrs_trainfeat]
+            event_one_out = events_min_lag.isel( time = one_out_idx_ev)
+            
+            comp_one_out = ts_3d_trainwghts.sel(time=event_one_out).mean(dim='time')
+            
+            std_lag = ts_3d_trainwghts.std(dim='time')
+            StoN = abs(comp_one_out/std_lag)
+            StoN = StoN / np.mean(StoN)
+#            StoN_wghts = comp_one_out*StoN
+            mean = comp_one_out/std_lag
+            threshold = mean.quantile(ex['perc_map']/100).values
+            nparray = np.reshape(np.nan_to_num(mean.values), (mean.size))
+#            threshold = np.percentile(nparray, ex['perc_map'])
+            mask_threshold = np.array(abs(nparray) < ( threshold ), dtype=int)
+            Corr_Coeff = np.ma.MaskedArray(nparray, mask=mask_threshold)
+            Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lats.values, lons.values)
+            iter_regions[idx] = Regions_lag_i
+#            iter_mean[idx] = Regions_lag_i
     
-    nparray = np.reshape(np.nan_to_num(mean.values), mean.size)
-    threshold = ex['n_std'] * np.std(nparray)
-    mask_threshold = abs(nparray) < ( threshold )
     
-    Corr_Coeff = np.ma.MaskedArray(nparray, mask=mask_threshold)
+#    if ex['wghts_std_anom'] == True: 
+#        # get a feeling for the variation within the composite, if anomalies are 
+#        # persistent they are assigned with a heavier weight
+#        std_lag =  ts_3d_trainwghts.std(dim='time')
+#    #    std_lag.plot()
+#        # smoothen field
+#        
+#    #    std_lag.where(std_lag.values < 0.1*std_lag.std().values)
+#    #    std_lag.plot()
+#    #    std_lag = rolling_mean_xr(std_lag, 3)
+#        
+#        StoN = abs(mean/std_lag)
+#        StoN = StoN / np.mean(StoN)
+#    #    StoN = StoN.where(StoN.values < 10*StoN.median().values)
+#    #    StoN.plot()
+#        StoN_wghts = mean*StoN
+#        mean = StoN_wghts
+    
+#    nparray = np.reshape(np.nan_to_num(iter_mean.values), (len(all_yrs_set), iter_mean[0].size))
+#    threshold = np.percentile(np.mean(nparray,axis=0), ex['perc_map'])
+##    mask_threshold = np.zeros(len(all_yrs_set))
+#    mask_threshold = np.array(abs(nparray) > ( threshold ), dtype=int)
+#    mask_sum    = np.sum(mask_threshold, axis=0)    
+##    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(mask_sum, (lats.size, lons.size))) ; plt.colorbar()
+#    mask_sum    = mask_sum > int( 0.99* len(all_yrs_set) )
+#    mask_sum = np.array(abs(mask_sum-1), dtype=bool)    
+#    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(mask_sum, (lats.size, lons.size))) ; plt.colorbar()
+    #%%
+    mask_reg_all_1 = (iter_regions != 0.)
+    reg_all_1 = iter_regions.copy()
+    reg_all_1[mask_reg_all_1] = 1
+    mask_final = ( np.sum(reg_all_1, axis=0) < int(0.8 * len(all_yrs_set)))
+#    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.array(mask_final,dtype=int), (lats.size, lons.size))) ; plt.colorbar()
+    normal_composite = ts_3d.sel(time=events_min_lag).mean(dim='time')
+    nparray_comp = np.reshape(np.nan_to_num(normal_composite.values), (normal_composite.size))
+    Corr_Coeff = np.ma.MaskedArray(nparray_comp, mask=mask_final)
     lat_grid = mean.latitude.values
     lon_grid = mean.longitude.values
 #        if Corr_Coeff.ndim == 1:
@@ -301,7 +350,7 @@ def extract_commun(composite, ts_3d, binary_events, ex):
 
     # retrieve regions sorted in order of 'strength'
     # strength is defined as an area weighted values in the composite
-    Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid)
+    Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, 10)
     
     # Regions are iteratively counted starting from first lag (R0) to last lag R(-1)
     # adapt numbering of different communities/Regions to account for 
@@ -327,11 +376,11 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     npmap = np.reshape(Regions_lag_i, (lat_grid.size, lon_grid.size))
     mask_strongest = (npmap!=0) 
     npmap[mask_strongest==False] = 0
-    xrnpmap_init = mean.copy()
+    xrnpmap_init = normal_composite.copy()
     xrnpmap_init.values = npmap
     
     mask = (('latitude', 'longitude'), mask_strongest)
-    mean.coords['mask'] = mask
+    normal_composite.coords['mask'] = mask
     xrnpmap_init.coords['mask'] = mask
     xrnpmap_init = xrnpmap_init.where(xrnpmap_init.mask==True)
 #    plt.figure()
@@ -356,18 +405,18 @@ def extract_commun(composite, ts_3d, binary_events, ex):
     npmap = np.ma.reshape(upd_regions, (len(lat_grid), len(lon_grid)))
     mask_strongest = (npmap!=0) 
     npmap[mask_strongest==False] = 0
-    xrnpmap = mean.copy()
+    xrnpmap = normal_composite.copy()
     xrnpmap.values = npmap
     
     mask = (('latitude', 'longitude'), mask_strongest)
-    mean.coords['mask'] = mask
+    normal_composite.coords['mask'] = mask
     xrnpmap.coords['mask'] = mask
     xrnpmap = xrnpmap.where(xrnpmap.mask==True)
 #    plt.figure()
 #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
     
     # normal mean of extracted regions
-    norm_mean = mean.where(mean.mask==True)
+    norm_mean = normal_composite.where(normal_composite.mask==True)
     
     
     
@@ -1183,7 +1232,7 @@ def merge_neighbors(lsts):
   return sets
 
 
-def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid):
+def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
     '''
 	takes Corr Coeffs and defines regions by strength
 
@@ -1331,8 +1380,10 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid):
 	#---------------------------------------	
 	
     # keep only regions which are larger then the mean size of the regions
-    
-    n_nodes = int(np.mean([len(r) for r in Regions]))
+    if minsize == 'mean':
+        n_nodes = int(np.mean([len(r) for r in Regions]))
+    else:
+        n_nodes = minsize
     
     R=[]
     Ar=[]
