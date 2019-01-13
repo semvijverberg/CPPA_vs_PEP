@@ -28,7 +28,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                                            test['Prec'].time[0].dt.hour)
         # select antecedant SST pattern to summer days:
         dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = func_mcK.find_region(test['Prec'], region='PEPrectangle')[0]
+        var_test_mcK = func_mcK.find_region(test['Prec'], region=ex['regionmcK'])[0]
     #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
     
         var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
@@ -45,7 +45,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
 #            print(ex['test_years'])
 #            print(crosscorr_Sem.time)
         
-        if ex['leave_n_out'] == True and ex['method'] == 'iter':
+        if (ex['leave_n_out'] == True) and (ex['method'] == 'iter') or (ex['ROC_leave_n_out']):
             if ex['n'] == 0:
                 ex['test_ts_mcK'][idx] = crosscorr_mcK.values 
                 ex['test_ts_Sem'][idx] = crosscorr_Sem.values
@@ -183,7 +183,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     return ex
 
 def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='default'):
-    
+    #%%
 #    predictions = ex['test_ts_mcK'][idx]
 #    observed = RV_ts
 #    thr_event = ex['hotdaythres']
@@ -307,5 +307,5 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='defau
         AUC_new    = numpy.sort(AUC_new[:])[::-1]
         pval       = (numpy.asarray(numpy.where(AUC_new > ROC_score)).size)/ n_boot
         ROC_bootstrap = AUC_new 
-  
+    #%%
     return ROC_score, ROC_bootstrap

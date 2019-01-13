@@ -28,7 +28,7 @@ import scipy
 
 def mcKmean(train, ex):
 
-    Prec_train_mcK = find_region(train['Prec'], region='PEPrectangle')[0]
+    Prec_train_mcK = find_region(train['Prec'], region=ex['regionmcK'])[0]
     dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
                                            train['Prec'].time[0].dt.hour)
 #        time = Prec_train_mcK.time
@@ -38,7 +38,7 @@ def mcKmean(train, ex):
     
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
     pattern = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
-                          dims=['lag','latitude','longitude'], name='McK_Composite_diff_lags',
+                          dims=['lag','latitude','longitude'], name='McK_Comp_diff_lags',
                           attrs={'units':'Kelvin'})
     array = np.zeros( (len(ex['lags']), len(dates_train)) )
     pattern_ts = xr.DataArray(data=array, coords=[ex['lags'], dates_train], 
@@ -52,13 +52,28 @@ def mcKmean(train, ex):
         idx = ex['lags'].index(lag)
         event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], Prec_train_mcK.time[0].dt.hour)
-        events_train_atlag = event_train - pd.Timedelta(int(lag), unit='d')
-        dates_train_atlag = dates_train - pd.Timedelta(int(lag), unit='d')
+        events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
+        dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
         
+        ### exlude leap days ###
+        # no leap days in dates_train_min_lag
+        noleapdays = ((dates_train_min_lag.dt.month == 2) & (dates_train_min_lag.dt.day == 29))==False
+        # only keep noleapdays
+        dates_train_min_lag = dates_train_min_lag[noleapdays].dropna(dim='time', how='all')
+        # also kick out the corresponding events
+        dates_train = dates_train[noleapdays].dropna(dim='time', how='all')
+        
+       # no leap days in events_min_lag
+        noleapdays = ((events_min_lag.dt.month == 2) & (events_min_lag.dt.day == 29))==False
+        # only keep noleapdays
+        events_min_lag = events_min_lag[noleapdays].dropna(dim='time', how='all') 
+        # also kick out the corresponding events
+        event_train = event_train[noleapdays].dropna(dim='time', how='all')   
 
-        pattern_atlag = Prec_train_mcK.sel(time=events_train_atlag).mean(dim='time')
+
+        pattern_atlag = Prec_train_mcK.sel(time=events_min_lag).mean(dim='time')
         pattern[idx] = pattern_atlag 
-        ts_3d = Prec_train_mcK.sel(time=dates_train_atlag)
+        ts_3d = Prec_train_mcK.sel(time=dates_train_min_lag)
         
         
         crosscorr = cross_correlation_patterns(ts_3d, pattern_atlag)
@@ -72,8 +87,9 @@ def mcKmean(train, ex):
     ds_mcK = xr.Dataset( {'pattern' : pattern, 'ts' : pattern_ts, 'perc' : pattern_p} )
     return ds_mcK
 
-def find_precursor(RV_ts, Prec_reg, ex):
-   #%% 
+
+def train_test_wrapper(RV_ts, Prec_reg, ex):
+    #%%
     if ex['leave_n_out'] == True and ex['method'] == 'random':
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
@@ -82,7 +98,7 @@ def find_precursor(RV_ts, Prec_reg, ex):
                             ex['startyear'], ex['endyear'], ex['tfreq'],
                             ex['lags'])
         ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
-    if ex['leave_n_out'] == True and ex['method'] == 'iter':
+    if ex['leave_n_out']==True and ex['method']=='iter' and ex['ROC_leave_n_out']==False:
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         now = datetime.datetime.now()
@@ -100,8 +116,12 @@ def find_precursor(RV_ts, Prec_reg, ex):
                              ex['endyear'], ex['tfreq'], ex['lags'])
         ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
         ex['test_years'] = 'all_years'
+        print('Training on all years')
+    #%%
     
-
+    return train, test, ex
+        
+def find_precursor(RV_ts, Prec_reg, train, test, ex):  
     #%%
 # =============================================================================
 #  Mean over 230 hot days
@@ -114,37 +134,17 @@ def find_precursor(RV_ts, Prec_reg, ex):
 # ============================================================================= 
    
     ds_Sem = extract_precursor(train, test, ex)   
-    
-# =============================================================================
-# Create 1d timeseries for logitmodel found in 'extract_precursor'
-# =============================================================================
-    if ex['new_model_sel'] == False:
-        ds_Sem = timeseries_for_test(ds_Sem, test, ex)
 
-    if ex['new_model_sel'] == True:
-        ds_Sem = NEW_timeseries_for_test(ds_Sem, test, ex)
-        # ds_Sem['ts_prediction'].plot()
     
     if ex['wghts_accross_lags'] == True:
         ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
-# =============================================================================
-# Force Leave_n_out validation even though pattern is based on whole dataset
-# =============================================================================
-    if ex['leave_n_out'] == False and ex['ROC_leave_n_out'] == True:
-        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
-                                          ex)
-        
-        foldername = 'Pattern_full_leave_{}_out_validation_{}_{}_tf{}_{}'.format(
-                ex['leave_n_years_out'], ex['startyear'], ex['endyear'], 
-                ex['tfreq'],ex['lags'])
+
     
-        ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
-    
-    return test, train, ds_mcK, ds_Sem, ex
+    return ds_mcK, ds_Sem, ex
+
 
 def extract_precursor(train, test, ex):
     #%%
-    time = train['RV'].time
     lats = train['Prec'].latitude
     lons = train['Prec'].longitude
     pthresholds = np.linspace(1, 9, 9, dtype=int)
@@ -158,12 +158,12 @@ def extract_precursor(train, test, ex):
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
     pattern_num = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='communities_numbered', 
-                          attrs={'units':'regions'})
+                          attrs={'units':'Precursor regions'})
 
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
     pattern_num_init = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='commun_numb_init', 
-                          attrs={'units':'regions'})
+                          attrs={'units':'Regions'})
      
     logit_model = []
     
@@ -188,9 +188,28 @@ def extract_precursor(train, test, ex):
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
                                            train['Prec'].time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
+        
         dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
                                            train['Prec'].time[0].dt.hour)
         dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
+        
+        ### exlude leap days ###
+        # no leap days in dates_train_min_lag
+        noleapdays = ((dates_train_min_lag.dt.month == 2) & (dates_train_min_lag.dt.day == 29))==False
+        # only keep noleapdays
+        dates_train_min_lag = dates_train_min_lag[noleapdays].dropna(dim='time', how='all')
+        # also kick out the corresponding events
+        dates_train = dates_train[noleapdays].dropna(dim='time', how='all')
+        
+       # no leap days in events_min_lag
+        noleapdays = ((events_min_lag.dt.month == 2) & (events_min_lag.dt.day == 29))==False
+        # only keep noleapdays
+        events_min_lag = events_min_lag[noleapdays].dropna(dim='time', how='all') 
+        # also kick out the corresponding events
+        event_train = event_train[noleapdays].dropna(dim='time', how='all')   
+
+        
+        
         event_idx = [list(dates_train.values).index(E) for E in event_train.values]
         binary_events = np.zeros(dates_train.size)    
         binary_events[event_idx] = 1
@@ -267,17 +286,17 @@ def extract_commun(events_min_lag, ts_3d, binary_events, ex):
     else:
         ts_3d_trainwghts = ts_3d
         bin_event_trainwghts = binary_events
-        # iterative leave one year out
-#        array = np.zeros( (len(all_yrs_set), len(lats), len(lons)) )
-#        iter_mean = xr.DataArray(data=array, coords=[all_yrs_set, lats, lons], 
-#                          dims=['yrs','latitude','longitude'], name='iter_mean')
-        
-        
+        # iterative leave two years out
+
         iter_regions = np.zeros( (len(all_yrs_set), ts_3d[0].size))
         
-        for yr in all_yrs_set:
-            idx = all_yrs_set.index(yr)
-            yrs_trainfeat =  [i for i in all_yrs_set if i != yr] 
+        # chunks of two years
+        n_ch = 2
+        chunks = [all_yrs_set[n_ch*i:n_ch*(i+1)] for i in range(int(len(all_yrs_set)/n_ch))]
+        
+        for yr in chunks:
+            idx = [all_yrs_set.index(yr[0]), all_yrs_set.index(yr[1])]
+            yrs_trainfeat =  [i for i in all_yrs_set if i not in yr] 
             # exclude year in ts_3d 
 #            one_out_idx_ts = [i for i in range(len(full_years) ) if full_years[i] in yrs_trainfeat]
 #            ts_3d_trainwghts = ts_3d.isel(time=one_out_idx_ts)
@@ -286,13 +305,13 @@ def extract_commun(events_min_lag, ts_3d, binary_events, ex):
             one_out_idx_ev = [i for i in range(len(comp_years) ) if comp_years[i] in yrs_trainfeat]
             event_one_out = events_min_lag.isel( time = one_out_idx_ev)
             
-            comp_one_out = ts_3d_trainwghts.sel(time=event_one_out).mean(dim='time')
+            comp_n_out = ts_3d_trainwghts.sel(time=event_one_out).mean(dim='time')
             
             std_lag = ts_3d_trainwghts.std(dim='time')
-            StoN = abs(comp_one_out/std_lag)
+            StoN = abs(comp_n_out/std_lag)
             StoN = StoN / np.mean(StoN)
-#            StoN_wghts = comp_one_out*StoN
-            mean = comp_one_out/std_lag
+#            StoN_wghts = comp_n_out*StoN
+            mean = comp_n_out/std_lag
             threshold = mean.quantile(ex['perc_map']/100).values
             nparray = np.reshape(np.nan_to_num(mean.values), (mean.size))
 #            threshold = np.percentile(nparray, ex['perc_map'])
@@ -334,7 +353,7 @@ def extract_commun(events_min_lag, ts_3d, binary_events, ex):
     mask_reg_all_1 = (iter_regions != 0.)
     reg_all_1 = iter_regions.copy()
     reg_all_1[mask_reg_all_1] = 1
-    mask_final = ( np.sum(reg_all_1, axis=0) < int(0.8 * len(all_yrs_set)))
+    mask_final = ( np.sum(reg_all_1, axis=0) < int(ex['comp_perc'] * len(all_yrs_set)))
 #    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.array(mask_final,dtype=int), (lats.size, lons.size))) ; plt.colorbar()
     normal_composite = ts_3d.sel(time=events_min_lag).mean(dim='time')
     nparray_comp = np.reshape(np.nan_to_num(normal_composite.values), (normal_composite.size))
@@ -576,7 +595,7 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
         if len(cregions_sign_idx)==0.:
             # delete regions that are not kept after testing if they got good enough
             # p_vals
-            idx_not_keeping = [list(track_r_kept).index(4) for i in regs_for_interac]
+            idx_not_keeping = [list(track_r_kept).index(i) for i in regs_for_interac]
             track_r_kept    = np.delete(track_r_kept, idx_not_keeping)
         else:
             # =============================================================================
@@ -747,13 +766,15 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
 
 
 def timeseries_for_test(ds_Sem, test, ex):
-    
+    #%%
     time = test['RV'].time
     
     array = np.zeros( (len(ex['lags']), len(time)) )
-    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time], 
+    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time.values], 
                           dims=['lag','time'], name='ts_predict_logit',
                           attrs={'units':'Kelvin'})
+    ds_Sem['ts_prediction'] = ts_predic
+
     
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
@@ -761,7 +782,7 @@ def timeseries_for_test(ds_Sem, test, ex):
                                            test['Prec'].time[0].dt.hour)
         # select antecedant SST pattern to summer days:
         dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = find_region(test['Prec'], region='PEPrectangle')[0]
+        var_test_mcK = find_region(test['Prec'], region=ex['regionmcK'])[0]
     #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
     
         var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
@@ -782,8 +803,13 @@ def timeseries_for_test(ds_Sem, test, ex):
         logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
         ts_pred = logit_model_lag_i.predict(X_n)
         ts_predic[idx] = ts_pred
-    
+    if ex['n'] != 0:
+        # make sure time axis align, otherwise it gives nans
+        ds_Sem['ts_prediction']['time'].values = time
     ds_Sem['ts_prediction'] = ts_predic
+#    print(ds_Sem['ts_prediction'])
+    
+    #%%
     return ds_Sem
 
 
@@ -993,10 +1019,10 @@ def NEW_timeseries_for_test(ds_Sem, test, ex):
                                            test['Prec'].time[0].dt.hour)
         # select antecedant SST pattern to summer days:
         dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = find_region(test['Prec'], region='PEPrectangle')[0]
-    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
-    
-        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
+#        var_test_mcK = find_region(test['Prec'], region=ex['regionmcK'])[0]
+#    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+#    
+#        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
         var_test_reg = test['Prec'].sel(time=dates_min_lag) 
         mean = ds_Sem['pattern'].sel(lag=lag)
         mean = np.reshape(mean.values, (mean.size))
@@ -1727,7 +1753,7 @@ def find_region(data, region='Mckinnonplot'):
     elif region ==  'Northern':
         west_lon = -360; east_lon = -1; south_lat = -10; north_lat = 80
     elif region ==  'Southern':
-        west_lon = -360; east_lon = -1; south_lat = -80; north_lat = 10
+        west_lon = -360; east_lon = -1; south_lat = -80; north_lat = -10
 
     region_coords = [west_lon, east_lon, south_lat, north_lat]
     import numpy as np
@@ -1757,8 +1783,8 @@ def find_region(data, region='Mckinnonplot'):
 
 
 def cross_correlation_patterns(full_timeserie, pattern):
-#    full_timeserie = ts_3d
-#    pattern = pattern_atlag
+#    full_timeserie = var_test_mcK
+#    pattern = ds_mcK['pattern'].sel(lag=lag)
     mask = np.ma.make_mask(np.isnan(pattern.values)==False)
     
     n_time = full_timeserie.time.size
@@ -1924,7 +1950,7 @@ def plot_events_validation(pred1, pred2, obs, pt1, pt2, othreshold, test_year=No
     ax3.legend()
 
 
-def plot_oneyr_events(xarray, threshold, test_year):
+def plot_oneyr_events(xarray, threshold, test_year, folder, saving=False):
     testyear = xarray.where(xarray.time.dt.year == test_year).dropna(dim='time', how='any')
     freq = pd.Timedelta(testyear.time.values[1] - testyear.time.values[0])
     plotpaper = xarray.sel(time=pd.DatetimeIndex(start=testyear.time.values[0], 
@@ -1939,6 +1965,9 @@ def plot_oneyr_events(xarray, threshold, test_year):
     plt.axhline(y=threshold)
     for days in eventdays.time.values:
         plt.axvline(x=days)
+    if saving == True:
+        filename = os.path.join(folder, 'ts_{}'.format(test_year))
+        plt.savefig(filename+'.png', dpi=300)
 
 def plotting_wrapper(plotarr, filename, ex, kwrgs=None):
 #    map_proj = ccrs.Miller(central_longitude=240)  
