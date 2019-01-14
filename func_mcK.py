@@ -94,26 +94,27 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         
-        foldername = 'leave_{}_out_{}_{}_tf{}_{}'.format(ex['leave_n_years_out'],
+        foldername = 'leave_{}_out_{}_{}_tf{}_{}nyr_{}'.format(ex['leave_n_years_out'],
                             ex['startyear'], ex['endyear'], ex['tfreq'],
-                            ex['lags'])
+                            ex['lags'], ex['n_oneyr'])
         ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
-    if ex['leave_n_out']==True and ex['method']=='iter' and ex['ROC_leave_n_out']==False:
+    if ex['leave_n_out']==True and ex['method']=='iter': # and ex['ROC_leave_n_out']==False
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         now = datetime.datetime.now()
-        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}_{}deg_{}'.format(ex['method'],
-                          ex['startyear'], ex['endyear'],
+        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}_{}deg_{}nyr_{}_{}'.format(
+                            ex['method'], ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
-                          now.strftime("%Y-%m-%d"))
+                          ex['n_oneyr'], ex['pval_logit_final'], now.strftime("%Y-%m-%d"))
     elif ex['leave_n_out'] == False:
         train = dict( { 'Prec'  : Prec_reg,
                         'RV'    : RV_ts,
                         'events': Ev_timeseries(RV_ts, ex['hotdaythres'])})
         test = train.copy()
 
-        foldername = 'hindcast_{}_{}_tf{}_{}'.format(ex['startyear'],
-                             ex['endyear'], ex['tfreq'], ex['lags'])
+        foldername = 'hindcast_{}_{}_tf{}_{}_{}'.format(ex['startyear'],
+                             ex['endyear'], ex['tfreq'], ex['lags'],
+                             ex['n_oneyr'])
         ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
         ex['test_years'] = 'all_years'
         print('Training on all years')
@@ -1771,13 +1772,33 @@ def find_region(data, region='Mckinnonplot'):
         # all_values = np.concatenate((np.reshape(left_of_meridional, (np.size(left_of_meridional))), np.reshape(right_of_meridional, np.size(right_of_meridional))))
         lon_idx = np.concatenate(( np.arange(find_nearest(data['longitude'], 360 + west_lon), len(data['longitude'])),
                               np.arange(0,find_nearest(data['longitude'], east_lon), 1) ))
-        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
-        all_values = data.sel(latitude=slice(north_lat, south_lat), 
-                              longitude=(data.longitude > 360 + west_lon) | (data.longitude < east_lon))
+        
+        north_idx = find_nearest(data['latitude'],north_lat)
+        south_idx = find_nearest(data['latitude'],south_lat)
+        if north_idx > south_idx:
+            lat_idx = np.arange(south_idx,north_idx,1)
+            all_values = data.sel(latitude=slice(south_lat, north_lat), 
+                                  longitude=(data.longitude > 360 + west_lon) | (data.longitude < east_lon))
+        elif south_idx > north_idx:
+            lat_idx = np.arange(north_idx,south_idx,1)
+            all_values = data.sel(latitude=slice(north_lat, south_lat), 
+                                  longitude=(data.longitude > 360 + west_lon) | (data.longitude < east_lon))
     if west_lon < 0 and east_lon < 0:
-        all_values = data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360+east_lon))
         lon_idx = np.arange(find_nearest(data['longitude'], 360 + west_lon), find_nearest(data['longitude'], 360+east_lon))
-        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
+        
+        north_idx = find_nearest(data['latitude'],north_lat)
+        south_idx = find_nearest(data['latitude'],south_lat)
+        if north_idx > south_idx:
+            lat_idx = np.arange(south_idx,north_idx,1)
+            all_values = data.sel(latitude=slice(south_lat, north_lat), 
+                                  longitude=slice(360+west_lon, 360+east_lon))
+        elif south_idx > north_idx:
+            lat_idx = np.arange(north_idx,south_idx,1)
+            all_values = data.sel(latitude=slice(north_lat, south_lat), 
+                                  longitude=slice(360+west_lon, 360+east_lon))     
+        
+#        all_values = data.sel(latitude=slice(north_lat, south_lat), longitude=slice(360+west_lon, 360+east_lon))
+#        lat_idx = np.arange(find_nearest(data['latitude'],north_lat),find_nearest(data['latitude'],south_lat),1)
 
     return all_values, region_coords
 
@@ -1819,7 +1840,10 @@ def cross_correlation_patterns(full_timeserie, pattern):
     
 #    # standardize
     corrself -= corrself.mean(dim='time')
-    return corrself
+    
+    # cov xarray
+    covself = xr.DataArray(covself, coords=[dates_test.values], dims=['time'])
+    return covself
 
 # =============================================================================
 # =============================================================================
