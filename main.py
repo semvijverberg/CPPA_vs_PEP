@@ -61,6 +61,7 @@ ex = dict(
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
      'use_ts_logit' :       False,
+     'logit_valid'  :       True,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
      'new_model_sel':       False,
@@ -176,7 +177,7 @@ ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 2
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
-ex['perc_map'] = 94
+ex['perc_map'] = 95
 ex['comp_perc'] = 0.8
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
@@ -196,7 +197,8 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
             'use_ts_logit', 'pval_logit_first', 'pval_logit_final',
-            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc']
+            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
+            'logit_valid']
 
 
 max_key_len = max([len(i) for i in print_ex])
@@ -311,7 +313,8 @@ ex, patterns_Sem, patterns_mcK = main(RV_ts, Prec_reg, ex)
 
 # save ex setting in text file
 folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
-assert (os.path.isdir(folder) != True), print('Are you sure you want to overwrite?')
+assert (os.path.isdir(folder) != True), print('Overwrite?\n{}'.format(folder))
+                                       
 
 
 if os.path.isdir(folder) != True : os.makedirs(folder)
@@ -331,7 +334,8 @@ output_dic_folder = folder
 filename = 'output_main_dic'
 if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
 to_dict = dict( {'ex'       :   ex,
-                 'patterns_Sem'  :   patterns_Sem } )
+                 'patterns_Sem'  :  patterns_Sem,
+                 'patterns_mcK'  :  patterns_mcK} )
 np.save(os.path.join(output_dic_folder, filename+'.npy'), to_dict)
 
 #%%
@@ -404,10 +408,10 @@ if ex['leave_n_out']:
     mean_n_patterns = patterns_Sem.mean(dim='n_tests') * wghts/np.max(wghts)
     # only keep gridcells that were extracted 50% of the test years
     pers_patt_filter = patterns_Sem.sel(n_tests=0).copy().drop('n_tests')
-    ex['persistence_criteria'] = int(0.5 * len(set(RV_ts.time.dt.year.values)))
+    ex['persistence_criteria'] = int(0.5 * ex['n_conv'])
     mask_pers = (wghts >= ex['persistence_criteria'])
 #    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
-    mean_n_patterns.values = np.array(mask_pers,dtype=int) * mean_n_patterns.values
+#    mean_n_patterns.values = np.array(mask_pers,dtype=int) * mean_n_patterns
     if mean_n_patterns.sum().values != 0.:
         mean_n_patterns.attrs['units'] = 'weighted by persistence - less than {} out of  {} masked'.format(
                                         ex['persistence_criteria'], ex['n_conv'])
@@ -417,6 +421,9 @@ if ex['leave_n_out']:
         filename = os.path.join(ex['exp_folder'], 'weighted by persistence'
                                 '- less than {} out of  {} masked'.format(
                                         ex['persistence_criteria'], ex['n_conv']))
+#        kwrgs = dict( {'title' : mean_n_patterns.name, 'clevels' : 'default', 'steps':17,
+#                        'vmin' : -3*mean_n_patterns.std().values, 'vmax' : 3*mean_n_patterns.std().values, 
+#                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
         func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=None)
 
 
@@ -430,8 +437,8 @@ if ex['leave_n_out']:
     years = range(ex['startyear'], ex['endyear'])
     for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
         yr = years[n]
-        pattern_num_init = l_ds_Sem[0]['pattern_num_init']
-        pattern_num = l_ds_Sem[0]['pattern_num']
+        pattern_num_init = l_ds_Sem[n]['pattern_num_init']
+        pattern_num = l_ds_Sem[n]['pattern_num']
 
 
         pattern_num_init.attrs['title'] = ('{} - initial regions extracted from '
@@ -475,27 +482,34 @@ if ex['leave_n_out']:
 
 
 #%% Load data
-#output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst/ERA_Tmax_sst_logitTrue_model_Sem/hindcast_1979_2017_tf1_[0, 6, 12, 18]')
+import numpy as np
+import os
+import xarray as xr
+output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[0, 5, 10, 15, 20, 30, 40, 50]_mcKthres_2.5deg_92nyr_0.05_94tperc_0.8tc_2019-01-15')
 
 filename = 'output_main_dic'
 
 dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
 ex = dic['ex']
-patterns = dic['patterns_Sem']
+patterns_Sem = dic['patterns_Sem']
+#patterns_mcK = dic['patterns_mcK']
 
 
-## Only keep gridcells that were extracted every run
-#if ex['leave_n_out']:
-#    pers_patt_filter = patterns.sel(n_tests=0).copy().drop('n_tests')
-#    ex['persistence_criteria'] = len(set(RV_ts.time.dt.year.values))
-#    mask_pers = (wghts == ex['persistence_criteria'])
-#    mean_n_patterns = patterns.mean(dim='n_tests')
-#    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
-#    #pers_patt_filter = mask_pers * patterns.mean(dim='n_tests')
-#    pers_patt_filter.attrs['units'] = 'only gridcells present every year over {} runs'.format(ex['n_conv'])
-#    pers_patt_filter.name = 'ROC {}'.format(score_Sem.values)
-#    func_mcK.plotting_wrapper(pers_patt_filter, filename, ex, kwrgs=None)
-    
+l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+lats = l_ds_mcK[0]['pattern'].latitude
+lons = l_ds_mcK[0]['pattern'].longitude
+array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+                          dims=['n_tests', 'lag','latitude','longitude'], 
+                          name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+for n in range(ex['n_conv']):
+    patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
+
+
+ 
+
+
+
 
 #%%
         

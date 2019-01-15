@@ -97,7 +97,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                                       ex['hotdaythres'], lag, 0, ex, 'default')[0]
                 elif ex['use_ts_logit'] == False:
                     ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
-                                      ex['hotdaythres'], lag, 0, ex, ds_Sem['perc'])[0]
+                                      ex['hotdaythres'], lag, 0, ex, 'default')[0]
                 
                 print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
