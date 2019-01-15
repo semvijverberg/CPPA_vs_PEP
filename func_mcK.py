@@ -102,19 +102,24 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         now = datetime.datetime.now()
-        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}_{}deg_{}nyr_{}_{}'.format(
+        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}_{}deg_{}nyr_{}_{}tperc_{}tc_{}'.format(
                             ex['method'], ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
-                          ex['n_oneyr'], ex['pval_logit_final'], now.strftime("%Y-%m-%d"))
+                          ex['n_oneyr'], ex['pval_logit_final'], ex['perc_map'],
+                          ex['comp_perc'], now.strftime("%Y-%m-%d"))
+                          
     elif ex['leave_n_out'] == False:
         train = dict( { 'Prec'  : Prec_reg,
                         'RV'    : RV_ts,
                         'events': Ev_timeseries(RV_ts, ex['hotdaythres'])})
         test = train.copy()
 
-        foldername = 'hindcast_{}_{}_tf{}_{}_{}'.format(ex['startyear'],
+        now = datetime.datetime.now()
+        foldername = 'hindcast_{}_{}_tf{}_{}_{}deg_{}nyr_{}_{}tm_{}tperc_{}'.format(ex['startyear'],
                              ex['endyear'], ex['tfreq'], ex['lags'],
-                             ex['n_oneyr'])
+                             ex['grid_res'], ex['n_oneyr'], 
+                             ex['pval_logit_final'], ex['perc_map'],
+                             ex['comp_perc'], now.strftime("%Y-%m-%d"))
         ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
         ex['test_years'] = 'all_years'
         print('Training on all years')

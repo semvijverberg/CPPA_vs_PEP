@@ -40,8 +40,8 @@ if os.path.isdir(path_pp) == False: os.makedirs(path_pp)
 
 ex = dict(
      {'grid_res'    :       2.5,
-     'startyear'    :       1982,
-     'endyear'      :       2015,
+     'startyear'    :       1979,
+     'endyear'      :       2017,
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
@@ -51,16 +51,16 @@ ex = dict(
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
-     'load_mcK'     :       True,
-     'RV_name'      :       'T95',
-     'name'         :       'sst_NOAA',
+     'load_mcK'     :       False,
+     'RV_name'      :       'T2mmax',
+     'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
      'method'       :       'iter',
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
-     'use_ts_logit' :       True,
+     'use_ts_logit' :       False,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
      'new_model_sel':       False,
@@ -68,7 +68,7 @@ ex = dict(
      )
 
 
-ex['region'] = 'Whole'
+ex['region'] = 'Northern'
 ex['regionmcK'] = 'PEPrectangle'
 ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
                       ex['region'], ex['regionmcK'])
@@ -172,11 +172,11 @@ else:
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = False
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
-ex['perc_map'] = 95  
+ex['perc_map'] = 94
 ex['comp_perc'] = 0.8
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
@@ -368,7 +368,8 @@ filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv
 func_mcK.plotting_wrapper(mean_n_patterns, filename, ex)
 
 #%%
-xarray_plot(dicRV['RV_array']['mask'], path=folder, name='RV_mask', saving=True)
+if ex['load_mcK'] == False:
+    xarray_plot(dicRV['RV_array']['mask'], path=folder, name='RV_mask', saving=True)
 ## plotting same figure as in paper
 func_mcK.plot_oneyr_events(RV_ts, ex['hotdaythres'], 2012, folder, saving=True)
 
