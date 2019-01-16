@@ -45,7 +45,7 @@ ex = dict(
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'sstartdate'   :       '06-01', #'1982-06-24',
+     'sstartdate'   :       '06-24', #'1982-06-24',
      'senddate'     :       '08-31', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
@@ -60,7 +60,7 @@ ex = dict(
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
-     'use_ts_logit' :       False,
+     'use_ts_logit' :       True,
      'logit_valid'  :       True,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
@@ -196,9 +196,9 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
-            'use_ts_logit', 'pval_logit_first', 'pval_logit_final',
+            'pval_logit_first', 'pval_logit_final',
             'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
-            'logit_valid']
+            'logit_valid', 'use_ts_logit', 'region', 'regionmcK']
 
 
 max_key_len = max([len(i) for i in print_ex])
@@ -279,11 +279,11 @@ def main(RV_ts, Prec_reg, ex):
         # =============================================================================
         # Make prediction based on logit model found in 'extract_precursor'
         # =============================================================================
-        if ex['new_model_sel'] == False:
+        if (ex['new_model_sel'] == False) and (ex['use_ts_logit'] == True):
             ds_Sem = func_mcK.timeseries_for_test(ds_Sem, test, ex)
 #            print(ds_Sem['ts_prediction'][0])
     
-        if ex['new_model_sel'] == True:
+        if (ex['new_model_sel'] == True) and (ex['use_ts_logit'] == True):
             ds_Sem = func_mcK.NEW_timeseries_for_test(ds_Sem, test, ex)
             # ds_Sem['ts_prediction'].plot()
             
@@ -438,7 +438,7 @@ if ex['leave_n_out']:
     for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
         yr = years[n]
         pattern_num_init = l_ds_Sem[n]['pattern_num_init']
-        pattern_num = l_ds_Sem[n]['pattern_num']
+        
 
 
         pattern_num_init.attrs['title'] = ('{} - initial regions extracted from '
@@ -454,19 +454,20 @@ if ex['leave_n_out']:
         
         func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
         
-
-        pattern_num.attrs['title'] = ('{} - regions that were kept after logit regression '
-                                     'pval < {}'.format(yr, ex['pval_logit_final']))
-        filename = os.path.join(subfolder, pattern_num.attrs['title'].replace(
-                                ' ','_')+'.png')
-        for_plt = pattern_num.copy()
-        for_plt.values = for_plt.values-0.5
-        kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
-                       'steps' : for_plt.max()+2,
-                       'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
-                       'cmap' : plt.cm.tab10, 'column' : 2} )
-        
-        func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
+        if ex['logit_valid'] == True:
+            pattern_num = l_ds_Sem[n]['pattern_num']
+            pattern_num.attrs['title'] = ('{} - regions that were kept after logit regression '
+                                         'pval < {}'.format(yr, ex['pval_logit_final']))
+            filename = os.path.join(subfolder, pattern_num.attrs['title'].replace(
+                                    ' ','_')+'.png')
+            for_plt = pattern_num.copy()
+            for_plt.values = for_plt.values-0.5
+            kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
+                           'steps' : for_plt.max()+2,
+                           'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
+                           'cmap' : plt.cm.tab10, 'column' : 2} )
+            
+            func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
         
         
     
