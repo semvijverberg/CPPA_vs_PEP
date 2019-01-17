@@ -37,6 +37,8 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
         crosscorr_mcK = func_mcK.cross_correlation_patterns(var_test_mcK, 
                                                             ds_mcK['pattern'].sel(lag=lag))
         if ex['use_ts_logit'] == False:
+            # weight by robustness of precursors
+            var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
             crosscorr_Sem = func_mcK.cross_correlation_patterns(var_test_reg, 
                                                             ds_Sem['pattern'].sel(lag=lag))
         elif ex['use_ts_logit'] == True:

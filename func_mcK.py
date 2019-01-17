@@ -164,17 +164,18 @@ def extract_precursor(train, test, ex):
     
     pattern_p2 = pattern_p1.copy()
 
-    
-    array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
-    pattern_num = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
-                          dims=['lag','latitude','longitude'], name='communities_numbered', 
-                          attrs={'units':'Precursor regions'})
 
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
     pattern_num_init = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='commun_numb_init', 
                           attrs={'units':'Precursor regions'})
-     
+
+    pattern_num = pattern_num_init.copy()
+    pattern_num.name = 'commun_numbered'
+    
+    weights     = pattern_p1.copy()
+    weights.name = 'weights'
+
     logit_model = []
     
     ex['ts_train_std'] = []
@@ -230,7 +231,7 @@ def extract_precursor(train, test, ex):
                                                 events_min_lag, ts_3d, binary_events, ex)  
 #        composite_p1.plot() 
 #        xrnpmap_p1.plot()
-        composite_p2, weights, xrnpmap_p2, combs_kept, logitmodel = logit_fit(composite_p1, 
+        composite_p2, wghts, xrnpmap_p2, combs_kept, logitmodel = logit_fit(composite_p1, 
                                                list_region_info, bin_event_trainwghts, ex)
 #        composite_p2.plot()  
 #        xrnpmap_p2.plot()        
@@ -242,8 +243,9 @@ def extract_precursor(train, test, ex):
         if type(xrnpmap_p2) == type(None):
             pattern_num[idx] = xrnpmap_p1
         else:
-            pattern_num[idx] = xrnpmap_p2
-            
+            pattern_num[idx] = xrnpmap_p2 
+        
+        weights[idx] = wghts 
         combs_reg_kept[idx] = combs_kept
         logit_model.append( logitmodel )
         
@@ -476,7 +478,6 @@ def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
         
     #    plt.figure()
     #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
-        
         
     
 #        # weight by odds
@@ -851,7 +852,7 @@ def timeseries_for_test(ds_Sem, test, ex):
         xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
         regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
         
-        var_test_reg = var_test_reg * ds_Sem['weights']
+        var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
         
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
                         xrpattern_lag_i.values, regions_for_ts, 
@@ -1092,7 +1093,7 @@ def NEW_timeseries_for_test(ds_Sem, test, ex):
         xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
         regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
         
-        ts_3d_w = var_test_reg * ds_Sem['weights']
+        ts_3d_w = var_test_reg * ds_Sem['weights'].sel(lag=lag)
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
                         xrpattern_lag_i.values, regions_for_ts, 
                         ts_3d_w, mean)[:2]
@@ -1791,6 +1792,23 @@ def rolling_mean_xr(xarray, win):
     new_xarray.values = (new_values * mask)
 
     return new_xarray
+
+def rolling_mean_time(xarray_or_file, ex):
+    if type(xarray_or_file) == str:
+        file_path = os.path.join(ex['path_pp'], xarray_or_file)        
+        ds = xr.open_dataset(file_path, decode_cf=True, decode_coords=True, decode_times=False)
+        ds_rollingmean = ds.rolling(time=ex['rollingmean'], center=True, min_periods=1).mean()
+        
+        new_fname = 'rm{}_'.format(ex['rollingmean']) + xarray_or_file
+        file_path = os.path.join(ex['path_pp'], new_fname)
+        ds_rollingmean.to_netcdf(file_path, mode='w')
+        print('saved netcdf as {}'.format(new_fname))
+        print('functions returnßing None')
+        xr_rolling_mean = None
+    else:
+        xr_rolling_mean = xarray_or_file.rolling(time=ex['rollingmean'], center=True, 
+                                                 min_periods=1).mean()
+    return xr_rolling_mean
 
 def to_datesmcK(datesmcK, to_hour, from_hour):
     

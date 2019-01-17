@@ -46,26 +46,27 @@ ex = dict(
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
      'sstartdate'   :       '06-24', #'1982-06-24',
-     'senddate'     :       '08-31', #'1982-08-22',
+     'senddate'     :       '08-22', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
      'load_mcK'     :       False,
      'RV_name'      :       'T2mmax',
-     'name'         :       'sst',
+     'name'         :       'sm12',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
      'method'       :       'iter',
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
-     'use_ts_logit' :       True,
-     'logit_valid'  :       True,
+     'use_ts_logit' :       False,
+     'logit_valid'  :       False,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
      'new_model_sel':       False,
-     'mcKthres'     :       'mcKthres'}  # 'mcKthres'
+     'mcKthres'     :       'mcKthres',
+     'rollingmean'  :       7}  # 'mcKthres'
      )
 
 
@@ -159,6 +160,9 @@ Prec_reg = func_mcK.find_region(varfullgl, region=ex['region'])[0]
 if ex['tfreq'] != 1:
     Prec_reg, datesvar = func_mcK.time_mean_bins(Prec_reg, ex)
 
+if ex['rollingmean'] != 1:
+    # Smoothen precursor time series by applying rolling mean
+    Prec_reg = func_mcK.rolling_mean_time(Prec_reg, ex)
 
 if ex['mcKthres'] == 'mcKthres':
     # binary time serie when T95 exceeds 1 std
@@ -173,11 +177,11 @@ else:
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = False
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [0, 5, 10, 20] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
-ex['perc_map'] = 95
+ex['perc_map'] = 98
 ex['comp_perc'] = 0.8
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
@@ -196,7 +200,7 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
-            'pval_logit_first', 'pval_logit_final',
+            'pval_logit_first', 'pval_logit_final', 'rollingmean',
             'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
             'logit_valid', 'use_ts_logit', 'region', 'regionmcK']
 
@@ -483,28 +487,28 @@ if ex['leave_n_out']:
 
 
 #%% Load data
-import numpy as np
-import os
-import xarray as xr
-output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[0, 5, 10, 15, 20, 30, 40, 50]_mcKthres_2.5deg_92nyr_0.05_94tperc_0.8tc_2019-01-15')
-
-filename = 'output_main_dic'
-
-dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
-ex = dic['ex']
-patterns_Sem = dic['patterns_Sem']
-#patterns_mcK = dic['patterns_mcK']
-
-
-l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-lats = l_ds_mcK[0]['pattern'].latitude
-lons = l_ds_mcK[0]['pattern'].longitude
-array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
-patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
-                          dims=['n_tests', 'lag','latitude','longitude'], 
-                          name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
-for n in range(ex['n_conv']):
-    patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
+#import numpy as np
+#import os
+#import xarray as xr
+#output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[0, 5, 10, 15, 20, 30, 40, 50]_mcKthres_2.5deg_92nyr_0.05_94tperc_0.8tc_2019-01-15')
+#
+#filename = 'output_main_dic'
+#
+#dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
+#ex = dic['ex']
+#patterns_Sem = dic['patterns_Sem']
+##patterns_mcK = dic['patterns_mcK']
+#
+#
+#l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+#lats = l_ds_mcK[0]['pattern'].latitude
+#lons = l_ds_mcK[0]['pattern'].longitude
+#array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+#patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+#                          dims=['n_tests', 'lag','latitude','longitude'], 
+#                          name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+#for n in range(ex['n_conv']):
+#    patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
 
 
  
