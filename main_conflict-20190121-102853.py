@@ -53,7 +53,7 @@ ex = dict(
      'tfreq'        :       1,
      'load_mcK'     :       False,
      'RV_name'      :       'T2mmax',
-     'name'         :       'sm2',
+     'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
      'method'       :       'iter',
@@ -65,9 +65,8 @@ ex = dict(
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
      'new_model_sel':       False,
-     'mcKthres'     :       15,
-     'rollingmean'  :       20,
-     'add_lsm'      :       True}  # 'mcKthres'
+     'mcKthres'     :       'mcKthres',
+     'rollingmean'  :       3}  # 'mcKthres'
      )
 
 
@@ -80,6 +79,23 @@ if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
 
 ex['sstartdate'] = str(ex['startyear']) + '-' + ex['sstartdate']
 ex['senddate'] = str(ex['startyear']) + '-' + ex['senddate']
+
+
+
+
+#if (ex['leave_n_out'] == True) & (ex['ROC_leave_n_out'] == False):
+#    ex['figpathbase'] = os.path.join(ex['figpathbase'], '{}_{}_logit{}_'
+#                      'model_Sem'.format(ex['RV_name'], ex['name'], ex['use_ts_logit']))
+#elif (ex['ROC_leave_n_out'] == True):
+#    ex['figpathbase'] = os.path.join(ex['figpathbase'], 
+#                              '{}_{}_train_all_test_iter'.format(ex['RV_name'], 'name'))
+#elif ex['leave_n_out'] == False:
+#        ex['figpathbase'] = os.path.join(ex['figpathbase'], 
+#                              '{}_{}_hindcast'.format(ex['RV_name'], 'name'))
+##ex_dic_path = "T95_sst_NOAA_default_settings.npy"
+#ex_dic_path = "ERA_T2mmax_sst_default_settings.npy"
+#ex = np.load(ex_dic_path, encoding='latin1').item()
+
 
 
 
@@ -114,7 +130,7 @@ else:
     datesRV = func_mcK.make_datestr(pd.to_datetime(RVtsfull.time.values), ex)
     # add RVhour to daily dates
     datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
-    filename_precur = '{}_{}-{}_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+    filename_precur = '{}_{}-{}_2jan_31aug_dt-1days_{}deg.nc'.format(ex['name'],
                        ex['startyear'], ex['endyear'], ex['grid_res'])
     ex['endyear'] = int(RVtsfull.time.dt.year[-1])
 
@@ -126,9 +142,7 @@ ex['n_oneyr'] = oneyr(datesRV).size
 #filename = '{}_1979-2017_2mar_31aug_dt-1days_2.5deg.nc'.format(ex['name'])
 
 # full globe - full time series
-filename_precur = 'sm2_1979-2017_2jan_31okt_dt-1days_2.5deg.nc'
-#path = os.path.join(ex['path_raw'], 'tmpfiles')
-varfullgl = func_mcK.import_array(filename_precur, ex, path='pp')
+varfullgl = func_mcK.import_array(filename_precur, ex)
 
 ## filter out outliers of sst
 #if ex['name']=='sst':
@@ -143,11 +157,6 @@ expanded_time = func_mcK.expand_times_for_lags(datesmcK, ex)
 # region mckinnon - expanded time series
 #Prec_reg = func_mcK.find_region(varfullgl.sel(time=expandeddaysmcK), region=ex['region'])[0]
 Prec_reg = func_mcK.find_region(varfullgl, region=ex['region'])[0]
-#Prec_reg = Prec_reg[1]
-#%%
-
-#%%
-
 if ex['tfreq'] != 1:
     Prec_reg, datesvar = func_mcK.time_mean_bins(Prec_reg, ex)
 
@@ -163,23 +172,17 @@ else:
     ex['hotdaythres'] = np.percentile(RV_ts.values, percentile)
     ex['mcKthres'] = '{}p'.format(percentile)
 
-if ex['add_lsm'] == True:
-    ex['path_pp'] = '/Users/semvijverberg/surfdrive/Scripts/rasterio/'
-    mask = func_mcK.import_array('mask_North_America_2.5deg.nc', ex)
-    mask_reg = func_mcK.find_region(mask, region=ex['region'])[0]
-    mask = (('latitude', 'longitude'), mask_reg)
-    Prec_reg.coords['mask'] = mask
-    Prec_reg.values = Prec_reg * mask_reg
+
 #ex['lags_idx'] = [12, 18, 24, 30]  
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = False
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [0, 20, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 90
-ex['min_n_gc'] = 5
+ex['min_n_gc'] = 10
 ex['comp_perc'] = 0.8
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
@@ -296,8 +299,7 @@ print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear',
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
             'pval_logit_first', 'pval_logit_final', 'rollingmean',
             'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
-            'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
-            'add_lsm', 'min_n_gc']
+            'logit_valid', 'use_ts_logit', 'region', 'regionmcK']
 
 max_key_len = max([len(i) for i in print_ex])
 for key in print_ex:
@@ -368,6 +370,28 @@ filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv
 func_mcK.plotting_wrapper(mean_n_patterns, filename, ex)
 
 
+# Robustness of training precursor regions
+subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
+total_folder = os.path.join(ex['figpathbase'], subfolder)
+if os.path.isdir(total_folder) != True : os.makedirs(total_folder)
+years = range(ex['startyear'], ex['endyear'])
+for n in np.arange(0, ex['n_conv'], 1, dtype=int): 
+    yr = years[n]
+    Robustness_weights = l_ds_Sem[n]['weights']
+    
+
+
+    Robustness_weights.attrs['title'] = ('{} - Robustness '
+                          'composite approach'.format(yr))
+    filename = os.path.join(subfolder, Robustness_weights.attrs['title'].replace(
+                            ' ','_')+'.png')
+    for_plt = Robustness_weights.copy()
+    kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
+                   'steps' : 30,
+                   'vmin' : 0, 'vmax' : for_plt.max().values, 
+                   'cmap' : plt.cm.hot_r, 'column' : 2} )
+    
+    func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
 
 #%%
 if ex['load_mcK'] == False:
@@ -468,29 +492,7 @@ if ex['leave_n_out']:
             func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
         
         
-#%%
-# Robustness of training precursor regions
-subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
-total_folder = os.path.join(ex['figpathbase'], subfolder)
-if os.path.isdir(total_folder) != True : os.makedirs(total_folder)
-years = range(ex['startyear'], ex['endyear'])
-for n in np.arange(0, ex['n_conv'], 5, dtype=int): 
-    yr = years[n]
-    Robustness_weights = l_ds_Sem[n]['weights']
     
-
-
-    Robustness_weights.attrs['title'] = ('{} - Robustness '
-                          'composite approach'.format(yr))
-    filename = os.path.join(subfolder, Robustness_weights.attrs['title'].replace(
-                            ' ','_')+'.png')
-    for_plt = Robustness_weights.copy()
-    kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
-                   'steps' : 30,
-                   'vmin' : 0, 'vmax' : for_plt.max().values, 
-                   'cmap' : plt.cm.hot_r, 'column' : 2} )
-    
-    func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
     
 # =============================================================================
 # =============================================================================
@@ -506,7 +508,7 @@ for n in np.arange(0, ex['n_conv'], 5, dtype=int):
 import numpy as np
 import os
 import xarray as xr
-#output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/best_iter_1979_2017_tf1_lags[0, 5, 10, 15, 20, 30, 40, 50]_mcKthres_2.5deg_60nyr_0.05False_tsFalse_95tperc_0.8tc_2019-01-16')
+output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/best_iter_1979_2017_tf1_lags[0, 5, 10, 15, 20, 30, 40, 50]_mcKthres_2.5deg_60nyr_0.05False_tsFalse_95tperc_0.8tc_2019-01-16')
 #
 filename = 'output_main_dic'
 #
