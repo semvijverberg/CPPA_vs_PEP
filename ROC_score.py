@@ -32,10 +32,11 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
     
         var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
+        var_patt_mcK = func_mcK.find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
         var_test_reg = test['Prec'].sel(time=dates_min_lag)        
-    
+        
         crosscorr_mcK = func_mcK.cross_correlation_patterns(var_test_mcK, 
-                                                            ds_mcK['pattern'].sel(lag=lag))
+                                                            var_patt_mcK)
         if ex['use_ts_logit'] == False:
             # weight by robustness of precursors
             var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
@@ -145,7 +146,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
             
-        elif ex['leave_n_out'] == False:
+        elif ex['leave_n_out'] == False or ex['method'][:5] == 'split':
             if idx == 0:
                 print('performing hindcast')
             n_boot = 5
@@ -183,6 +184,145 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
     
     ex['score_per_run'].append([ex['test_years'], len(test['events']), ds_mcK, ds_Sem, ROC_boot])
     return ex
+
+
+
+def single_ROC_score_wrapper(test, trian, ds, ex):
+    #%%
+    # =============================================================================
+    # calc ROC scores
+    # =============================================================================
+    ROC  = np.zeros(len(ex['lags']))
+    ROC_boot = np.zeros(len(ex['lags']))
+    
+    if ds['pattern'].name[:3] == 'mcK':
+        var_test_reg = func_mcK.find_region(test['Prec'], region=ex['regionmcK'])[0]
+    else:
+        var_test_reg = test['Prec']
+        
+        
+    for lag in ex['lags']:
+        idx = ex['lags'].index(lag)
+        dates_test = func_mcK.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+                                           test['Prec'].time[0].dt.hour)
+        # select antecedant SST pattern to summer days:
+        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
+        
+    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+    
+        var_test = var_test_reg.sel(time=dates_min_lag)   
+    
+        if ds['pattern'].name[:3] == 'mcK':
+            pred_ts = func_mcK.cross_correlation_patterns(var_test, 
+                                                            ds['pattern'].sel(lag=lag))
+        if ex['use_ts_logit'] == False and ds['pattern'].name[:3] != 'mcK':
+            # weight by robustness of precursors
+            var_test = var_test * ds['weights'].sel(lag=lag)
+            pred_ts = func_mcK.cross_correlation_patterns(var_test, 
+                                                            ds['pattern'].sel(lag=lag))
+        elif ex['use_ts_logit'] == True and ds['pattern'].name[:3] != 'mcK':
+            pred_ts = ds['ts_prediction'][idx]
+#        if idx == 0:
+#            print(ex['test_years'])
+#            print(crosscorr_Sem.time)
+        
+        if (ex['leave_n_out'] == True) and (ex['method'] == 'iter') or (ex['ROC_leave_n_out']):
+            if ex['n'] == 0:
+                ex['test_ts'][idx] = pred_ts.values 
+                ex['test_RV'][idx]  = test['RV'].values
+    #                ex['test_RV_Sem'][idx]  = test['RV'].values
+            else:
+    #                update_ROCS = ex['test_ts_mcK'][idx].append(list(crosscorr_mcK.values))
+                ex['test_ts'][idx] = np.concatenate( [ex['test_ts_mcK'][idx], pred_ts.values] )
+                ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )  
+                
+                    
+        
+            if  ex['n'] == ex['n_conv']-1:
+                if idx == 0:
+                    print('Calculating ROC scores\nDatapoints precursor length '
+                      '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),
+                       len(ex['test_RV'][0])))
+                
+                # normalize
+                ex['test_ts'][idx] = (ex['test_ts'][idx]-np.mean(ex['test_ts'][idx])/ \
+                                          np.std(ex['test_ts'][idx]))            
+                
+#                Prec_threshold_mcK = np.percentile(ex['test_ts_mcK'][idx], 70)
+#                Prec_threshold_Sem = np.percentile(ex['test_ts_Sem'][idx], 70)
+#
+#                func_mcK.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+                
+                n_boot = 10
+                ROC[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
+                                      ex['hotdaythres'], lag, n_boot, ex, 'default')
+
+                
+#                print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+#                '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
+#                  lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
+            
+                
+        elif ex['leave_n_out'] == True and ex['method'] == 'random' :        
+                               
+            # check detection of precursor:
+            Prec_threshold = ds['perc'].sel(percentile=60 /10).values[0]
+            
+            # check if there are any detections
+            Prec_det = (func_mcK.Ev_timeseries(pred_ts, 
+                                           Prec_threshold).size > ex['min_detection'])
+
+
+    
+            if Prec_det == True:
+                n_boot = 1
+                ROC[idx], ROC_boot = ROC_score(pred_ts, test['RV'],
+                                      ex['hotdaythres'], lag, n_boot, ex, ds['perc'])
+            else:
+                print('Not enough predictions detected, neglecting this predictions')
+                ROC[idx] = ROC_boot = 0.5
+    
+                                  
+            
+            print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+                '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
+                  lag, ROC[idx], 2*np.std(ROC_boot)))
+            
+        elif ex['leave_n_out'] == False or ex['method'][:5] == 'split':
+            if idx == 0:
+                print('performing hindcast')
+            n_boot = 5
+            ROC[idx], ROC_boot = ROC_score(pred_ts, test['RV'],
+                                   ex['hotdaythres'], lag, n_boot, ex, 'default')
+
+            
+            Prec_threshold_Sem = np.percentile(pred_ts, 70)
+            
+            
+#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+            
+#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], 
+#                                            ds_Sem['perc'].sel(percentile=5)), 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+            
+#            print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+#                '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
+#                  lag, ROC[idx], 2*np.std(ROC_boot)))
+    
+    #%%
+    # store output:
+    ds['score'] = xr.DataArray(data=ROC, coords=[ex['lags']], 
+                      dims=['lag'], name='score_diff_lags',
+                      attrs={'units':'-'})
+
+
+    
+    ex['score_per_run'].append([ex['test_years'], len(test['events']), ds, ROC_boot])
+    return ex
+
+
 
 def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='default'):
     #%%

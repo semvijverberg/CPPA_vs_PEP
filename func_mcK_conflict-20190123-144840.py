@@ -16,7 +16,6 @@ import matplotlib.colors as colors
 from shapely.geometry.polygon import LinearRing
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.ticker as mticker
-import cartopy.mpl.ticker as cticker
 import datetime
 import scipy 
 
@@ -287,7 +286,7 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     comp_years = list(events_min_lag.time.dt.year.values)
     all_yrs_set = list(set(ts_3d.time.dt.year.values))
 
-    ts_3d_trainwghts = ts_3d.copy()
+    ts_3d_trainwghts = ts_3d
     ts_3d_trainwghts = ts_3d_trainwghts/ts_3d_trainwghts.std(dim='time')
     bin_event_trainwghts = binary_events
     
@@ -451,7 +450,7 @@ def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
         xrnpmap = None
         combs_kept = None
         logitmodel = None
-        ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
+        ex['ts_train_std'].append(np.std(ts_regions_lag_i[:,:], axis=0))
         
     
     weighted_mean = norm_mean * weights_comp 
@@ -1931,15 +1930,6 @@ def cross_correlation_patterns(full_timeserie, pattern):
 # Plotting functions
 # =============================================================================
 # =============================================================================
-    
-def extend_longitude(data):
-    import xarray as xr
-    import numpy as np
-    plottable = xr.concat([data, data.sel(longitude=data.longitude[:1])], dim='longitude').to_dataset(name="ds")
-    plottable["longitude"] = np.linspace(0,360, len(plottable.longitude))
-    plottable = plottable.to_array(dim='ds')
-    return plottable
-
 def xarray_plot(data, path='default', name = 'default', saving=False):
     # from plotting import save_figure
     import matplotlib.pyplot as plt
@@ -2097,7 +2087,7 @@ def plotting_wrapper(plotarr, filename, ex, kwrgs=None):
     if kwrgs == None:
         kwrgs = dict( {'title' : plotarr.name, 'clevels' : 'notdefault', 'steps':17,
                         'vmin' : -3*plotarr.std().values, 'vmax' : 3*plotarr.std().values, 
-                       'cmap' : plt.cm.RdBu_r, 'column' : 1, 'subtitles' : None} )
+                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
     else:
         kwrgs = kwrgs
         kwrgs['title'] = plotarr.attrs['title']
@@ -2117,19 +2107,14 @@ def finalfigure(xrdata, file_name, kwrgs):
                       aspect= (xrdata.longitude.size) / xrdata.latitude.size, size=3.5)
     figwidth = g.fig.get_figwidth() ; figheight = g.fig.get_figheight()
 
-    lon_tick = xrdata.longitude.values
-#    lon_tick[lon_tick > 180] -= 360
-    
-    longitude_labels = np.linspace(np.min(lon_tick), np.max(lon_tick), 6, dtype=int)
-    longitude_labels = np.array(sorted(list(set(np.round(longitude_labels, -1)))))
 
-#    longitude_labels = np.concatenate([ longitude_labels, [longitude_labels[-1]], [180]])
-#    longitude_labels = [-150,  -70,    0,   70,  140, 140]
-    latitude_labels = np.linspace(xrdata.latitude.min(), xrdata.latitude.max(), 4, dtype=int)
+    longitude_labels = np.linspace(xrdata.longitude.min(), xrdata.longitude.max(), 6, dtype=int)
+    longitude_labels = longitude_labels[np.array(longitude_labels) > 180] -= 360
+    longitude_labels = np.array(sorted(list(set(np.round(longitude_labels, -1)))))
+    
+    latitude_labels = np.linspace(xrdata.latitude.min(), xrdata.latitude.max(), 6, dtype=int)
     latitude_labels = sorted(list(set(np.round(latitude_labels, -1))))
     
-    g.set_ticks(max_xticks=5, max_yticks=5, fontsize='small')
-    g.set_xlabels(label=[str(el) for el in longitude_labels])
 
     
     if kwrgs['clevels'] == 'default':
@@ -2145,51 +2130,39 @@ def finalfigure(xrdata, file_name, kwrgs):
     for n_ax in np.arange(0,n_plots):
         ax = g.axes.flatten()[n_ax]
 #        print(n_ax)
-        plotdata = extend_longitude(xrdata[n_ax]).squeeze().drop('ds')
+        plotdata = xrdata[n_ax]
         im = plotdata.plot.contourf(ax=ax, cmap=cmap,
                                transform=ccrs.PlateCarree(),
                                subplot_kws={'projection': map_proj},
-                                levels=clevels, add_colorbar=False)
-        ax.coastlines(color='black', alpha=0.5)
+                               levels=clevels, add_colorbar=False)
+        ax.coastlines(color='black', alpha=0.4)
         
         ax.set_extent([lons[0], lons[-1], lats[0], lats[-1]], ccrs.PlateCarree())
-        if kwrgs['subtitles'] == None:
-            pass
-        else:
-            fontdict = dict({'fontsize'     : 18,
-                             'fontweight'   : 'bold'})
-            ax.set_title(kwrgs['subtitles'][n_ax], fontdict=fontdict, loc='center')
 #        lons = [-5.8, -5.8, -5.5, -5.5]
 #        lats = [50.27, 50.48, 50.48, 50.27]
         lons_sq = [-215, -215, -125, -125]
         lats_sq = [50, 19, 19, 50]
         ring = LinearRing(list(zip(lons_sq , lats_sq )))
-        ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green',
-                          linewidth=3.5)
+        ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green')
         if map_proj.proj4_params['proj'] in ['merc', 'eqc']:
-#            print(True)
-            ax.set_xticks(longitude_labels[:-1], crs=ccrs.PlateCarree())
-            ax.set_xticklabels(longitude_labels[:-1], fontsize=12)
-            lon_formatter = cticker.LongitudeFormatter()
-            ax.xaxis.set_major_formatter(lon_formatter)
-            
-            ax.set_yticks(latitude_labels, crs=ccrs.PlateCarree())
-            ax.set_yticklabels(latitude_labels, fontsize=12)
-            lat_formatter = cticker.LatitudeFormatter()
-            ax.yaxis.set_major_formatter(lat_formatter)
-            ax.grid(linewidth=1, color='black', alpha=0.3, linestyle='--')
-            ax.set_xlabel('')
-            ax.set_ylabel('')
-            
+            print(True)
+            gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+                              xlocs=longitude_labels)
+            gl.xlabels_top = False;
+            gl.xlabels_bottom = True
+            gl.xlocator = mticker.FixedLocator(longitude_labels)
+            gl.xformatter = LONGITUDE_FORMATTER
+            gl.ylabels_right = False;
+            gl.ylabels_left = False;            
+            gl.yformatter = LATITUDE_FORMATTER
         else:
             pass
         
-    g.fig.text(0.5, 0.93, kwrgs['title'], fontsize=20,
-               fontweight='heavy', horizontalalignment='center')
-    cbar_ax = g.fig.add_axes([0.25, (figheight/40)/(n_plots*2), 
-                                  0.5, (figheight/40)/(n_plots*2)])
+    g.fig.text(0.5, 0.95, kwrgs['title'], fontsize=15, horizontalalignment='center')
+    cbar_ax = g.fig.add_axes([0.25, (figheight/30)/n_plots, 
+                                  0.5, (figheight/30)/n_plots])
     plt.colorbar(im, cax=cbar_ax, orientation='horizontal', 
-                 label=xrdata.attrs['units'], extend='both')
+                 label=xrdata.attrs['units'], extend='neither')
     g.fig.savefig(file_name ,dpi=250)
     #%%
     return

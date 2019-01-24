@@ -6,17 +6,13 @@ Created on Mon Dec 10 10:31:42 2018
 @author: semvijverberg
 """
 
-class color:
-   PURPLE = '\033[95m'
-   CYAN = '\033[96m'
-   DARKCYAN = '\033[36m'
-   BLUE = '\033[94m'
-   GREEN = '\033[92m'
-   YELLOW = '\033[93m'
-   RED = '\033[91m'
-   BOLD = '\033[1m'
-   UNDERLINE = '\033[4m'
-   END = '\033[0m'
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Nov 13 14:40:40 2018
+
+@author: semvijverberg
+"""
 
 import os, sys
 os.chdir('/Users/semvijverberg/surfdrive/Scripts/Extracting_precursor/')
@@ -363,18 +359,17 @@ l_ds_Sem        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_ru
 ran_ROCS        = [ex['score_per_run'][i][4] for i in range(len(ex['score_per_run']))]
 score_mcK       = np.round(ex['score_per_run'][-1][2]['score'], 2)
 score_Sem       = np.round(ex['score_per_run'][-1][3]['score'], 2)
-ROC_str_mcK      = ['{} days - ROC score {}'.format(ex['lags'][i], score_mcK[i].values) for i in range(len(ex['lags'])) ]
-ROC_str_Sem      = ['{} days - ROC score {}'.format(ex['lags'][i], score_Sem[i].values) for i in range(len(ex['lags'])) ]
+
+
 # Sem plot
 # share kwargs with mcKinnon plot
 kwrgs = dict( {'title' : '', 'clevels' : 'notdefault', 'steps':17,
-                    'vmin' : -0.5, 'vmax' : 0.5, 'subtitles' : ROC_str_Sem,
+                    'vmin' : -0.5, 'vmax' : 0.5, 
                    'cmap' : plt.cm.RdBu_r, 'column' : 1} )
 
 mean_n_patterns = patterns_Sem.mean(dim='n_tests')
-#mean_n_patterns['lag'] = ROC_str_Sem
 mean_n_patterns.attrs['units'] = 'mean over {} runs'.format(ex['n_conv'])
-mean_n_patterns.attrs['title'] = 'Composite mean - Objective Precursor Pattern'
+mean_n_patterns.attrs['title'] = 'Objective Precursor Pattern'
 mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
 filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']) )
 func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=kwrgs)
@@ -385,10 +380,9 @@ func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=kwrgs)
 filename = os.path.join(ex['exp_folder'], 'mcKinnon mean composite_tf{}_{}'.format(
             ex['tfreq'], ex['lags']))
 mcK_mean = patterns_mcK.mean(dim='n_tests')
-kwrgs['subtitles'] = ROC_str_mcK
 mcK_mean.name = 'Composite mean green rectangle: ROC {}'.format(score_mcK.values)
 mcK_mean.attrs['units'] = 'Kelvin'
-mcK_mean.attrs['title'] = 'Composite mean - Subjective green rectangle pattern'
+mcK_mean.attrs['title'] = 'Subjective green rectangle pattern'
 func_mcK.plotting_wrapper(mcK_mean, filename, ex, kwrgs=kwrgs)
 
 #if (ex['leave_n_out'] == True) and (ex['ROC_leave_n_out'] == False):
@@ -399,6 +393,9 @@ func_mcK.plotting_wrapper(mcK_mean, filename, ex, kwrgs=kwrgs)
 #    mcK_std.name = 'Composite std: ROC {}'.format(score_mcK.values)
 #    mcK_std.attrs['units'] = 'Kelvin'
 #    func_mcK.plotting_wrapper(mcK_std, filename, ex)
+
+
+
 
 #%%
 if ex['load_mcK'] == False:
@@ -424,40 +421,37 @@ if ex['leave_n_out']:
     pers_patt.values = wghts
     
     pers_patt.attrs['units'] = 'persistence pattern over {} runs'.format(ex['n_conv'])
-    pers_patt.attrs['title'] = 'persistence pattern over {} runs'.format(ex['n_conv'])
+    pers_patt.attrs['title'] = 'ROC {}'.format(score_Sem.values)
     filename = os.path.join(ex['exp_folder'], 'counting_times_extracted_over_{}_tests'.format(ex['n_conv']) )
     kwrgs = dict( {'title' : pers_patt.name, 'clevels' : 'notdefault', 'steps':17,
                     'vmin' : pers_patt.min().values, 'vmax' : pers_patt.max().values, 
-                   'cmap' : plt.cm.gist_heat_r, 'column' : 2, 'subtitles': ROC_str_Sem })
+                   'cmap' : plt.cm.gist_heat_r, 'column' : 2} )
     func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
 #%% Weighing features if there are extracted every run (training set)
 # weighted by persistence of pattern over
 if ex['leave_n_out']:
     kwrgs = dict( {'title' : '', 'clevels' : 'notdefault', 'steps':17,
-                    'vmin' : -0.5, 'vmax' : 0.5, 'subtitles' : ROC_str_Sem,
+                    'vmin' : -0.5, 'vmax' : 0.5, 
                    'cmap' : plt.cm.RdBu_r, 'column' : 1} )
     # weighted by persistence (all years == wgt of 1, less is below 1)
     mean_n_patterns = patterns_Sem.mean(dim='n_tests') * wghts/np.max(wghts)
-    mean_n_patterns['lag'] = ROC_str_Sem
     # only keep gridcells that were extracted 50% of the test years
     pers_patt_filter = patterns_Sem.sel(n_tests=0).copy().drop('n_tests')
 #    ex['persistence_criteria'] = int(0.5 * ex['n_conv'])
 #    mask_pers = (wghts >= ex['persistence_criteria'])
 #    mean_n_patterns.coords['mask'] = (('lag', 'latitude','longitude'), mask_pers)
 #    mean_n_patterns.values = np.array(mask_pers,dtype=int) * mean_n_patterns
-    title = 'Composite mean - Objective Precursor Pattern'#\nweighted by robustness over {} tests'.format(
-#                                            ex['n_conv'])
     if mean_n_patterns.sum().values != 0.:
-        mean_n_patterns.attrs['units'] = 'Kelvin'
-        mean_n_patterns.attrs['title'] = title
-                             
+        mean_n_patterns.attrs['units'] = 'weighted by robustness over {} tests'.format(ex['n_conv'])
+        mean_n_patterns.attrs['title'] = 'weighted by robustness over {} tests'.format(ex['n_conv'])
         mean_n_patterns.name = 'ROC {}'.format(score_Sem.values)
-        filename = os.path.join(ex['exp_folder'], ('weighted by robustness '
-                             'over {} tests'.format(ex['n_conv']) ))
+        filename = os.path.join(ex['exp_folder'], 'weighted by persistence'
+                                '- less than {} out of  {} masked'.format(
+                                        ex['persistence_criteria'], ex['n_conv']))
 #        kwrgs = dict( {'title' : mean_n_patterns.name, 'clevels' : 'default', 'steps':17,
 #                        'vmin' : -3*mean_n_patterns.std().values, 'vmax' : 3*mean_n_patterns.std().values, 
 #                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
-        func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=kwrgs)
+        func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=None)
 
 
 #%% Initial regions from only composite extraction:
@@ -526,7 +520,7 @@ for n in np.arange(0, ex['n_conv'], 5, dtype=int):
                    'cmap' : plt.cm.hot_r, 'column' : 2} )
     
     func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
- 
+    
 # =============================================================================
 # =============================================================================
 # =============================================================================
