@@ -19,7 +19,7 @@ import matplotlib.ticker as mticker
 import cartopy.mpl.ticker as cticker
 import datetime
 import scipy 
-flatten = lambda l: [item for sublist in l for item in sublist]
+
 
 
 # =============================================================================
@@ -287,179 +287,11 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     lats = ts_3d.latitude
     lons = ts_3d.longitude
     comp_years = list(events_min_lag.time.dt.year.values)
-
+    all_yrs_set = list(set(ts_3d.time.dt.year.values))
 
     ts_3d_trainwghts = ts_3d.copy()
     ts_3d_trainwghts = ts_3d_trainwghts/ts_3d_trainwghts.std(dim='time')
     bin_event_trainwghts = binary_events
-    
-# =============================================================================
-# New (more balanced)
-# =============================================================================
-    
-    def create_chunks(all_yrs_set, n_out, chunks):
-        '''yr_prior are years which have priority to be part of the chunk '''
-        #%%
-        # determine priority in random sampling
-        # count what years are the least taken out of the composite
-        def find_priority(chunks, all_yrs_set):
-            count = np.zeros( (len(all_yrs_set)) )
-            for yr in all_yrs_set:
-                idx = all_yrs_set.index(yr)
-                count[idx] = np.sum( [chnk.count(yr) for chnk in chunks] )
-            list_idx_1 = list(np.argwhere(count == count.min()))
-            list_idx_2 = list(np.argwhere(count != count.max()))
-            
-            all_yrs = all_yrs_set.copy()    
-            yr_prior_1 = [all_yrs[int(i)] for i in list_idx_1]
-            yr_prior_2 = [all_yrs[int(i)] for i in list_idx_2 if i not in list_idx_1]
-            return yr_prior_1, yr_prior_2, count
-        
-        yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
-        
-        
-        for yr in all_yrs_set:
-  
-            
-            # yr is always going to be part of chunk
-            if len(yr_prior_1) != 0 and yr in yr_prior_1:
-                yr_prior_1.remove(yr)
-            
-            # resplenish every time half the years have passed
-            if all_yrs_set.index(yr) < 0.5*len(all_yrs_set) or len(yr_prior_1) == 0:
-                yr_prior_1, yr_prior_2 = find_priority(chunks, all_yrs_set)[:2]
-                if len(yr_prior_1) != 0 and yr in yr_prior_1:
-                    yr_prior_1.remove(yr)
-            
-            years_to_add = [[yr]]
-            n_choice = n_out - 1
-            
-            
-            if len(yr_prior_1) >= n_choice:
-                
-                # yr of for loop iteration is always in list, 
-                # give priority to yr_prior_1
-                
-                yrs_to_list  = list(np.random.choice(yr_prior_1, n_choice, replace=False))
-                years_to_add.append(yrs_to_list)
-                years_to_add = flatten(years_to_add)
-                # the year that is added has now reduced priority
-                yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
-                if len(years_to_add) != n_out:
-                    print(yr_prior_1)
-                    print(yr_prior_2)
-                    print(years_to_add)
-                    print('first')
-                    break
-                
-            elif len(yr_prior_1) < n_choice:# and len(yr_prior_1) != 0:
-                
-                yr_prior_1, yr_prior_2 = find_priority(chunks, all_yrs_set)[:2]
-                if len(yr_prior_1) != 0 and yr in yr_prior_1:
-                    yr_prior_1.remove(yr)
-                
-                n_out_part = n_choice - len(yr_prior_1)
-                
-                # if there are still sufficient years left in yr_prior_1, just pick them
-                if n_out_part < len(yr_prior_1):
-                    yrs_to_list  = list(np.random.choice(yr_prior_1, n_out_part, replace=False))
-                # if not, add what is left in yr_prior_1
-                else:
-                    yrs_to_list = yr_prior_1
-                years_to_add.append(yrs_to_list)
-#                years_to_add = flatten(years_to_add)
-                
-                # the year that is added has now reduced priority
-                yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
-                
-                # what is left is sampled from yr_prior_2
-                
-                n_out_left = n_out - len(flatten(years_to_add))
-                
-                # ensure that there will be years in prior_2
-                if len(yr_prior_2) < n_out_left and len(yr_prior_2) != 0:
-                    # add years that are left in yr_prior_2
-                    years_to_add.append(yr_prior_2)
-                    n_out_left = n_out - len(years_to_add)
-                if len(yr_prior_2) == 0 or n_out_left != 0:
-                    # create new yr_prior_2
-                    yr_prior_2 = [yr for yr in all_yrs_set.copy() if yr not in flatten(years_to_add)]
-                
-                    yrs_to_list  = list(np.random.choice(yr_prior_2, n_out_left, replace=False))
-                    years_to_add.append( yrs_to_list )
-                    years_to_add = flatten(years_to_add)
-                
-                if len(years_to_add) != n_out:
-                    print('second')
-                    print(yr_prior_1)
-                    print(yr_prior_2)
-                    print(n_out_left)
-                    print(n_out)
-                    print(years_to_add)
-                    break
-                
-            chunks.append( years_to_add )
-            
-                
-        yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
-
-            #%%     
-        return chunks, count
-    #%%
-    all_yrs_set = list(set(ts_3d.time.dt.year.values))    
-    all_yrs_set = all_yrs_set
-    ex['n_ch1'] = 1
-    chunks = [all_yrs_set[i:(i+ex['n_ch1'])] for i in range(int(len(all_yrs_set)))]
-    years_n_out = [2, 3, 4, 5]
-    for n_out in years_n_out:    
-        chunks, count = create_chunks(all_yrs_set, n_out, chunks)
-        #%%        
-        
-
-#    chunks, yr_prior, count = create_chunks(all_yrs_set, 2, chunks)
-#    
-#
-#    chunks, yr_prior, count = create_chunks(all_yrs_set, 3, chunks)
-#    
-#    chunks, yr_prior, count = create_chunks(all_yrs_set, 5, yr_prior)
-## =============================================================================
-## Old
-## =============================================================================
-#    # iterative leave n years out
-#    chunks = []
-#    # chunks of two years
-#    ex['n_ch1'] = 1
-#    chunks1 = [all_yrs_set[i:(i+ex['n_ch1'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch2'] = 2
-#    chunks2 = [all_yrs_set[i:(i+ex['n_ch2'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch3'] = 3
-#    chunks3 = [all_yrs_set[i:(i+ex['n_ch3'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch4'] = 4
-#    chunks4 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch5'] = 5
-#    chunks5 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in range(int(len(all_yrs_set)))]
-#
-#    for chnk in chunks1:
-#        chunks.append(chnk)
-#    for chnk in chunks2:
-#        chunks.append(chnk)
-#    for chnk in chunks3:
-#        chunks.append(chnk)
-#    for chnk in chunks4:
-#        chunks.append(chnk)
-#    for chnk in chunks5:
-#        chunks.append(chnk)    
-## =============================================================================
-## Old
-## =============================================================================
-        
-# =============================================================================
-# New (more balanced)
-# =============================================================================
     
     # iterative leave n years out
     chunks = []
@@ -467,25 +299,13 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     ex['n_ch1'] = 1
     chunks1 = [all_yrs_set[i:(i+ex['n_ch1'])] for i in range(int(len(all_yrs_set)))]
     ex['n_ch2'] = 2
-    all_yrs_set.reverse()
-    chunks2 = [all_yrs_set[i:(i+ex['n_ch2'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch2'])]
-    chunks2 = [i for i in chunks2 if len(i) == ex['n_ch2']]
-    all_yrs_set.reverse()
+    chunks2 = [all_yrs_set[i:(i+ex['n_ch2'])] for i in range(int(len(all_yrs_set)))]
     ex['n_ch3'] = 3
-    chunks3 = [all_yrs_set[i:(i+ex['n_ch3'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch3'])]
-    chunks3 = [i for i in chunks3 if len(i) == ex['n_ch3']]
-    all_yrs_set.reverse()
+    chunks3 = [all_yrs_set[i:(i+ex['n_ch3'])] for i in range(int(len(all_yrs_set)))]
     ex['n_ch4'] = 4
-    chunks4 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch4'])]
-    chunks4 = [i for i in chunks4 if len(i) == ex['n_ch4']]
-    all_yrs_set.reverse()
+    chunks4 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in range(int(len(all_yrs_set)))]
     ex['n_ch5'] = 5
-    chunks5 = [all_yrs_set[i:(i+ex['n_ch5'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch5'])]
-    chunks5 = [i for i in chunks5 if len(i) == ex['n_ch5']]
-    all_yrs_set.reverse()
-    ex['n_ch6'] = 6
-    chunks6 = [all_yrs_set[i:(i+ex['n_ch6'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch6'])]
-    chunks6 = [i for i in chunks6 if len(i) == ex['n_ch6']]
+    chunks5 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in range(int(len(all_yrs_set)))]
 
     for chnk in chunks1:
         chunks.append(chnk)
@@ -497,17 +317,6 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
         chunks.append(chnk)
     for chnk in chunks5:
         chunks.append(chnk)      
-    for chnk in chunks6:
-        chunks.append(chnk) 
-
-# =============================================================================
-# New (more balanced)
-# =============================================================================
-
-    count = np.zeros( (len(all_yrs_set)) )
-    for yr in all_yrs_set:
-        idx = all_yrs_set.index(yr)
-        count[idx] = np.sum( [chnk.count(yr) for chnk in chunks] )
 
     iter_regions = np.zeros( (len(chunks), ts_3d[0].size))
     
@@ -1840,12 +1649,8 @@ def expand_times_for_lags(datetime, ex):
     
     return pd.to_datetime(expanded_time)
 
-def make_datestr(dates, ex, startyr):
-    
-    sstartdate = str(startyr) + '-' + ex['startperiod']
-    senddate   = str(startyr) + '-' + ex['endperiod']
-    
-    start_yr = pd.DatetimeIndex(start=sstartdate, end=senddate, 
+def make_datestr(dates, ex):
+    start_yr = pd.DatetimeIndex(start=ex['sstartdate'], end=ex['senddate'], 
                                 freq=(dates[1] - dates[0]))
     breakyr = dates.year.max()
     datesstr = [str(date).split('.', 1)[0] for date in start_yr.values]
@@ -2273,7 +2078,7 @@ def plot_events_validation(pred1, pred2, obs, pt1, pt2, othreshold, test_year=No
 
 
 def plot_oneyr_events(xarray, ex, test_year, folder, saving=False):
-    #%%
+
     if ex['mcKthres'] == 'mcKthres':
         # binary time serie when T95 exceeds 1 std
         threshold = xarray.mean(dim='time').values + xarray.std().values
@@ -2286,39 +2091,22 @@ def plot_oneyr_events(xarray, ex, test_year, folder, saving=False):
     plotpaper = xarray.sel(time=pd.DatetimeIndex(start=testyear.time.values[0], 
                                                 end=testyear.time.values[-1], 
                                                 freq=freq ))
-
-    fig = plt.figure(figsize=(15, 5))
-    ax = fig.add_subplot(111)
-    plotpaper.plot(ax=ax, color='blue', linewidth=3, label='ERA-I T95')
-    plt.axhline(y=threshold, color='blue', linewidth=2 )
-    plt.fill_between(plotpaper.time.values, threshold, plotpaper, where=(plotpaper.values > threshold),
-                 interpolate=True, color="crimson", label="ERA-I hot days")
+    #plotpaper = mcKtsfull.sel(time=pd.DatetimeIndex(start='2012-06-23', end='2012-08-21', 
+    #                                freq=(datesmcK[1] - datesmcK[0])))
+    eventdays = plotpaper.where( plotpaper.values > threshold) 
+    eventdays = eventdays.dropna(how='all', dim='time').time
+    plt.figure()
+    plotpaper.plot()
+    plt.axhline(y=threshold)
+    for days in eventdays.time.values:
+        plt.axvline(x=days)
     if ex['load_mcK'] == False:
         T95name = 'PEP-T95TimeSeries.txt'
-        T95, datesmcK = read_T95(T95name, ex)
-        datesRV_mcK = make_datestr(datesmcK, ex, 1982)
-        T95RV = T95.sel(time=datesRV_mcK)
-        if ex['mcKthres'] == 'mcKthres':
-            # binary time serie when T95 exceeds 1 std
-            threshold = T95RV.mean(dim='time').values + T95RV.std().values
-        else:
-            percentile = ex['mcKthres']
-            threshold = np.percentile(T95RV.values, percentile)
-        testyear = datesRV_mcK.where(datesRV_mcK.year == test_year).dropna()
-        freq = pd.Timedelta(testyear[1] - testyear[0])
-        plot_T95 = T95RV.sel(time=pd.DatetimeIndex(start=testyear[0], 
-                                                end=testyear[-1], 
+        T95 = read_T95(T95name, ex)[0]
+        plot_T95 = T95.sel(time=pd.DatetimeIndex(start=testyear.time.values[0], 
+                                                end=testyear.time.values[-1], 
                                                 freq=freq ))
-        plot_T95.plot(ax=ax, linewidth=2, color='orange', linestyle='--', label='GHCND T95')
-        plt.axhline(y=threshold, color='orange', linestyle='--', linewidth=2)
-        plt.fill_between(plot_T95.time.values, threshold, plot_T95, where=(plot_T95.values > threshold),
-                 interpolate=True, color="orange", alpha=0.5, label="GHCND hot days")
-    ax.legend(fontsize='x-large', fancybox=True, facecolor='grey',
-              frameon=True, framealpha=0.3)
-    ax.set_title('T95 timeseries and hot days events in eastern U.S.', fontsize=18)
-    ax.set_ylabel('Temperature anomalies [K]', fontsize=15)
-    ax.set_xlabel('')
-    #%%
+        plot_T95.plot()
     if saving == True:
         filename = os.path.join(folder, 'ts_{}'.format(test_year))
         plt.savefig(filename+'.png', dpi=300)

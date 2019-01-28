@@ -36,13 +36,13 @@ ex = dict(
      'base_path'    :       base_path,
      'path_raw'     :       path_raw,
      'path_pp'      :       path_pp,
-     'startperiod'   :       '06-24', #'1982-06-24',
-     'endperiod'     :       '08-22', #'1982-08-22',
+     'startperiod'   :       '06-01', #'1982-06-24',
+     'endperiod'     :       '08-31', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
-     'load_mcK'     :       True,
+     'load_mcK'     :       False,
      'RV_name'      :       'T2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
@@ -91,14 +91,17 @@ if ex['load_mcK'] == True:
     ex['RVname'] = 'T95'
     ex['name']   = 'sst_NOAA'
     ex['startyear'] = 1982
+    ex['sstartdate'] = str(ex['startyear']) + '-' + ex['startperiod']
+    ex['senddate'] = str(ex['startyear']) + '-' + ex['endperiod']
     T95name = 'PEP-T95TimeSeries.txt'
     RVtsfull, datesmcK = func_mcK.read_T95(T95name, ex)
-    datesRV = func_mcK.make_datestr(datesmcK, ex,
-                                    ex['startyear'])
+    datesRV = func_mcK.make_datestr(datesmcK, ex)
     filename_precur = ('{}_1982-2017_2jan_31aug_dt-1days_{}deg'
                     '.nc'.format(ex['name'], ex['grid_res']))
 else:
     # load ERA-i Time series
+    ex['sstartdate'] = str(ex['startyear']) + '-' + ex['startperiod']
+    ex['senddate'] = str(ex['startyear']) + '-' + ex['endperiod']
     print('\nimportRV_1dts is true, so the 1D time serie given with name \n'
               '{} is imported.'.format(ex['RVts_filename']))
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
@@ -107,8 +110,7 @@ else:
     ex['mask'] = dicRV['RV_array']['mask']
     xarray_plot(dicRV['RV_array']['mask'])
     RVhour   = RVtsfull.time[0].dt.hour.values
-    datesRV = func_mcK.make_datestr(pd.to_datetime(RVtsfull.time.values), ex, 
-                                    ex['startyear'])
+    datesRV = func_mcK.make_datestr(pd.to_datetime(RVtsfull.time.values), ex)
     # add RVhour to daily dates
     datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
     filename_precur = '{}_{}-{}_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
@@ -128,7 +130,7 @@ if ex['mcKthres'] == 'mcKthres':
 else:
     percentile = ex['mcKthres']
     ex['hotdaythres'] = np.percentile(RV_ts.values, percentile)
-    ex['mcKthres'] = '{}'.format(percentile)
+    ex['mcKthres'] = '{}p'.format(percentile)
 
 # Load in external ncdf
 filename = '{}_1979-2017_2mar_31okt_dt-1days_{}deg.nc'.format(ex['name'],
@@ -178,7 +180,7 @@ ex['leave_n_years_out'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 95
 ex['min_n_gc'] = 5
-ex['comp_perc'] = 0.80
+ex['comp_perc'] = 0.50
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
 if ex['leave_n_out'] == True and ex['method'] == 'iter' or ex['ROC_leave_n_out']:
@@ -318,7 +320,7 @@ for key in print_ex:
 
 # save ex setting in text file
 folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
-assert (os.path.isdir(folder) != True), 'Overwrite?\n{}'.format(folder)
+assert (os.path.isdir(folder) != True), print('Overwrite?\n{}'.format(folder))
                                        
 
 
@@ -419,12 +421,12 @@ for n in np.arange(0, ex['n_conv'], 5, dtype=int):
     
 #%%
 if ex['load_mcK'] == False:
+    T95name = 'PEP-T95TimeSeries.txt'
+    RVtsfull, datesmcK = func_mcK.read_T95(T95name, ex)
     xarray_plot(dicRV['RV_array']['mask'], path=folder, name='RV_mask', saving=True)
-
-func_mcK.plot_oneyr_events(RV_ts, ex, 2012, folder, saving=True)
 ## plotting same figure as in paper
-#for i in range(2005, 2010):
-#    func_mcK.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
+func_mcK.plot_oneyr_events(RV_ts, ex['hotdaythres'], 2012, folder, saving=True)
+
 #%% Counting times gridcells were extracted
 if ex['leave_n_out']:
     n_lags = patterns_Sem.sel(n_tests=0).lag.size
@@ -538,7 +540,7 @@ if ex['leave_n_out']:
 import numpy as np
 import os
 import xarray as xr
-output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/best_iter_1979_2017_tf1_lags[0, 5, 10, 15, 20, 30, 40, 50]_mcKthres_2.5deg_60nyr_0.05False_tsFalse_95tperc_0.8tc_2019-01-16')
+output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[5, 15, 30, 50]_mcKthres_2.5deg_60nyr_0.05False_tsFalse_95tperc_0.8tc_1_2019-01-24')
 
 #
 filename = 'output_main_dic'
@@ -547,9 +549,6 @@ dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1
 ex = dic['ex']
 patterns_Sem = dic['patterns_Sem']
 patterns_mcK = dic['patterns_mcK']
-if 'startperiod' not in ex.keys():
-    ex['startperiod'] = ex['sstartdate'][-5:]
-    ex['endperiod'] = ex['senddate'][-5:]
 
 
 #%%
