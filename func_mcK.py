@@ -93,7 +93,7 @@ def mcKmean(train, ex):
 def train_test_wrapper(RV_ts, Prec_reg, ex):
     #%%
     now = datetime.datetime.now()
-    if ex['leave_n_out'] == True and ex['method'] == 'random':
+    if ex['leave_n_out'] == True and ex['method'][:6] == 'random':
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         
@@ -299,7 +299,6 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     
     def create_chunks(all_yrs_set, n_out, chunks):
         '''yr_prior are years which have priority to be part of the chunk '''
-        #%%
         # determine priority in random sampling
         # count what years are the least taken out of the composite
         def find_priority(chunks, all_yrs_set):
@@ -318,9 +317,7 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
         yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
         
         
-        for yr in all_yrs_set:
-  
-            
+        for yr in all_yrs_set:    
             # yr is always going to be part of chunk
             if len(yr_prior_1) != 0 and yr in yr_prior_1:
                 yr_prior_1.remove(yr)
@@ -334,7 +331,6 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
             years_to_add = [[yr]]
             n_choice = n_out - 1
             
-            
             if len(yr_prior_1) >= n_choice:
                 
                 # yr of for loop iteration is always in list, 
@@ -342,10 +338,10 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
                 
                 yrs_to_list  = list(np.random.choice(yr_prior_1, n_choice, replace=False))
                 years_to_add.append(yrs_to_list)
-                years_to_add = flatten(years_to_add)
+#                years_to_add = flatten(years_to_add)
                 # the year that is added has now reduced priority
                 yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
-                if len(years_to_add) != n_out:
+                if len(flatten(years_to_add)) != n_out:
                     print(yr_prior_1)
                     print(yr_prior_2)
                     print(years_to_add)
@@ -381,15 +377,17 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
                     # add years that are left in yr_prior_2
                     years_to_add.append(yr_prior_2)
                     n_out_left = n_out - len(years_to_add)
-                if len(yr_prior_2) == 0 or n_out_left != 0:
+#                    years_to_add = flatten(years_to_add)
+                elif len(yr_prior_2) == 0 or n_out_left != 0:
                     # create new yr_prior_2
                     yr_prior_2 = [yr for yr in all_yrs_set.copy() if yr not in flatten(years_to_add)]
                 
                     yrs_to_list  = list(np.random.choice(yr_prior_2, n_out_left, replace=False))
                     years_to_add.append( yrs_to_list )
-                    years_to_add = flatten(years_to_add)
+#                    years_to_add = flatten(years_to_add)
+    
                 
-                if len(years_to_add) != n_out:
+                if len(flatten(years_to_add)) != n_out:
                     print('second')
                     print(yr_prior_1)
                     print(yr_prior_2)
@@ -398,14 +396,13 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
                     print(years_to_add)
                     break
                 
-            chunks.append( years_to_add )
+            chunks.append( flatten(years_to_add) )
             
                 
         yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
-
-            #%%     
+  
         return chunks, count
-    #%%
+
     all_yrs_set = list(set(ts_3d.time.dt.year.values))    
     all_yrs_set = all_yrs_set
     ex['n_ch1'] = 1
@@ -413,96 +410,8 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     years_n_out = [2, 3, 4, 5]
     for n_out in years_n_out:    
         chunks, count = create_chunks(all_yrs_set, n_out, chunks)
-        #%%        
-        
+    #%%        
 
-#    chunks, yr_prior, count = create_chunks(all_yrs_set, 2, chunks)
-#    
-#
-#    chunks, yr_prior, count = create_chunks(all_yrs_set, 3, chunks)
-#    
-#    chunks, yr_prior, count = create_chunks(all_yrs_set, 5, yr_prior)
-## =============================================================================
-## Old
-## =============================================================================
-#    # iterative leave n years out
-#    chunks = []
-#    # chunks of two years
-#    ex['n_ch1'] = 1
-#    chunks1 = [all_yrs_set[i:(i+ex['n_ch1'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch2'] = 2
-#    chunks2 = [all_yrs_set[i:(i+ex['n_ch2'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch3'] = 3
-#    chunks3 = [all_yrs_set[i:(i+ex['n_ch3'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch4'] = 4
-#    chunks4 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in range(int(len(all_yrs_set)))]
-#    all_yrs_set.reverse()
-#    ex['n_ch5'] = 5
-#    chunks5 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in range(int(len(all_yrs_set)))]
-#
-#    for chnk in chunks1:
-#        chunks.append(chnk)
-#    for chnk in chunks2:
-#        chunks.append(chnk)
-#    for chnk in chunks3:
-#        chunks.append(chnk)
-#    for chnk in chunks4:
-#        chunks.append(chnk)
-#    for chnk in chunks5:
-#        chunks.append(chnk)    
-## =============================================================================
-## Old
-## =============================================================================
-        
-# =============================================================================
-# New (more balanced)
-# =============================================================================
-    
-    # iterative leave n years out
-    chunks = []
-    # chunks of two years
-    ex['n_ch1'] = 1
-    chunks1 = [all_yrs_set[i:(i+ex['n_ch1'])] for i in range(int(len(all_yrs_set)))]
-    ex['n_ch2'] = 2
-    all_yrs_set.reverse()
-    chunks2 = [all_yrs_set[i:(i+ex['n_ch2'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch2'])]
-    chunks2 = [i for i in chunks2 if len(i) == ex['n_ch2']]
-    all_yrs_set.reverse()
-    ex['n_ch3'] = 3
-    chunks3 = [all_yrs_set[i:(i+ex['n_ch3'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch3'])]
-    chunks3 = [i for i in chunks3 if len(i) == ex['n_ch3']]
-    all_yrs_set.reverse()
-    ex['n_ch4'] = 4
-    chunks4 = [all_yrs_set[i:(i+ex['n_ch4'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch4'])]
-    chunks4 = [i for i in chunks4 if len(i) == ex['n_ch4']]
-    all_yrs_set.reverse()
-    ex['n_ch5'] = 5
-    chunks5 = [all_yrs_set[i:(i+ex['n_ch5'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch5'])]
-    chunks5 = [i for i in chunks5 if len(i) == ex['n_ch5']]
-    all_yrs_set.reverse()
-    ex['n_ch6'] = 6
-    chunks6 = [all_yrs_set[i:(i+ex['n_ch6'])] for i in np.arange(0,int(len(all_yrs_set)),ex['n_ch6'])]
-    chunks6 = [i for i in chunks6 if len(i) == ex['n_ch6']]
-
-    for chnk in chunks1:
-        chunks.append(chnk)
-    for chnk in chunks2:
-        chunks.append(chnk)
-    for chnk in chunks3:
-        chunks.append(chnk)
-    for chnk in chunks4:
-        chunks.append(chnk)
-    for chnk in chunks5:
-        chunks.append(chnk)      
-    for chnk in chunks6:
-        chunks.append(chnk) 
-
-# =============================================================================
-# New (more balanced)
-# =============================================================================
 
     count = np.zeros( (len(all_yrs_set)) )
     for yr in all_yrs_set:
@@ -1354,7 +1263,11 @@ def rand_traintest(RV_ts, Prec_reg, ex):
         a_conditions_failed = False
         # Divide into random sampled 25 year for train & rest for test
     #        n_years_sampled = int((ex['endyear'] - ex['startyear']+1)*0.66)
-        if ex['method'] == 'random':
+        if ex['method'][:6] == 'random':
+            size_train = int(np.percentile(range(len(all_years)), int(ex['method'][6:])))
+            size_test  = len(all_years) - size_train
+            ex['leave_n_years_out'] = size_test
+            ex['n_stop'] = int(len(all_years) / size_test) + 1
             rand_test_years = np.random.choice(all_years, ex['leave_n_years_out'], replace=False)
         elif ex['method'] == 'iter':
             ex['leave_n_years_out'] = 1
@@ -1364,7 +1277,7 @@ def rand_traintest(RV_ts, Prec_reg, ex):
             size_test  = len(all_years) - size_train
             ex['leave_n_years_out'] = size_test
             print('Using {} years to train and {} to test'.format(size_train, size_test))
-            rand_test_years = all_years[size_train:]
+            rand_test_years = all_years[-size_test:]
             
     
             
@@ -2422,11 +2335,40 @@ def finalfigure(xrdata, file_name, kwrgs):
         
     g.fig.text(0.5, 0.93, kwrgs['title'], fontsize=20,
                fontweight='heavy', horizontalalignment='center')
-    cbar_ax = g.fig.add_axes([0.25, (figheight/40)/(n_plots*2), 
-                                  0.5, (figheight/40)/(n_plots*2)])
-    plt.colorbar(im, cax=cbar_ax, orientation='horizontal', 
-                 label=xrdata.attrs['units'], extend='neither')
-    g.fig.savefig(file_name ,dpi=250)
+    
+    if 'adj_fig_h' in kwrgs.keys():
+        g.fig.set_figheight(figheight*kwrgs['adj_fig_h'], forward=True)
+    if 'adj_fig_w' in kwrgs.keys():
+        g.fig.set_figwidth(figwidth*kwrgs['adj_fig_w'], forward=True)
+
+    if 'cbar_vert' in kwrgs.keys():
+        cbar_vert = (figheight/40)/(n_plots*2) + kwrgs['cbar_vert']
+    else:
+        cbar_vert = (figheight/40)/(n_plots*2)
+    if 'cbar_hght' in kwrgs.keys():
+        cbar_hght = (figheight/40)/(n_plots*2) + kwrgs['cbar_hght']
+    else:
+        cbar_hght = (figheight/40)/(n_plots*2)
+    if 'wspace' in kwrgs.keys():
+        g.fig.subplots_adjust(wspace=kwrgs['wspace'])
+    if 'hspace' in kwrgs.keys():
+        g.fig.subplots_adjust(hspace=kwrgs['hspace'])
+    if 'extend' in kwrgs.keys():
+        extend = kwrgs['extend'][0]
+    else:
+        extend = 'neither'
+
+    cbar_ax = g.fig.add_axes([0.25, cbar_vert, 
+                                  0.5, cbar_hght], label='xbar')
+    cbar = plt.colorbar(im, cax=cbar_ax, orientation='horizontal', 
+                 extend=extend)
+    if 'extend' in kwrgs.keys():
+        if kwrgs['extend'][0] == 'min':
+            cbar.cmap.set_under(kwrgs['extend'][1], alpha=0.2)
+    cbar.set_label(xrdata.attrs['units'], fontsize=16)
+    cbar.ax.tick_params(labelsize=14)
+
+    g.fig.savefig(file_name ,dpi=250, frameon=True)
     #%%
     return
 

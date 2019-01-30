@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
 Created on Mon Oct 15 17:50:16 2018
 
@@ -13,8 +13,9 @@ import pandas as pd
 import func_mcK
 import xarray as xr
 import matplotlib.pyplot as plt
+import seaborn as sns
 
-def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
+def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
     #%%
     # =============================================================================
     # calc ROC scores
@@ -48,7 +49,10 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
 #            print(ex['test_years'])
 #            print(crosscorr_Sem.time)
         
-        if (ex['leave_n_out'] == True) and (ex['method'] == 'iter') or (ex['ROC_leave_n_out']):
+        if (
+            ex['leave_n_out'] == True and ex['method'] == 'iter'
+            or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
+            ):
             if ex['n'] == 0:
                 ex['test_ts_mcK'][idx] = crosscorr_mcK.values 
                 ex['test_ts_Sem'][idx] = crosscorr_Sem.values
@@ -61,30 +65,77 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                 ex['test_RV'][idx] = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )  
                 
                 
-                if ex['plot_ts'] == True:
-                    ax = plt.subplot(111)
-                    ax.set_ylim(-1,1)
-                    ax.plot(crosscorr_mcK.values, label='mcK')
-                    ax.plot(crosscorr_Sem.values, label='Sem')
-                    ax.plot(test['RV']/(3*test['RV'].std()))
-                    ax.legend(loc='lower left')
-                    plt.text(0.5,0.5, '# events {}'.format(len(test['events']),
-                             horizontalalignment='center',
-                             verticalalignment='center', transform=ax.transAxes))
-                    plt.show()
+#                if ex['plot_ts'] == True:
+#                    ax = plt.subplot(111)
+#                    ax.set_ylim(-3,3)
+#                    # should normalize with std from training spatial covariance or logit ts
+#                    ax.plot(crosscorr_mcK.values/crosscorr_mcK.std().values, label='mcK', color='blue')
+#                    ax.plot(crosscorr_Sem.values/crosscorr_Sem.std().values, label='Sem', color='green')
+##                    ax.plot(crosscorr_mcK.values/np.std(ex['test_ts_mcK'][idx]), label='mcK', color='blue')
+##                    ax.plot(crosscorr_Sem.values/np.std(ex['test_ts_Sem'][idx]), label='Sem', color='green')
+#                    norm_test_RV = (test['RV']-np.mean(test['RV']))/(train['RV']-np.mean(train['RV'])).std()
+#                    ax.plot(norm_test_RV,alpha=0.4, color='red')
+#                    threshold = norm_test_RV.std().values
+#                    plt.fill_between(range(norm_test_RV.size), threshold, norm_test_RV.values, 
+#                                     where=(norm_test_RV.values > threshold),
+#                                     interpolate=True, color="orange", alpha=0.5, label="hot days")
+#                    ax.legend(loc='lower left')
+#                    plt.text(0.5,0.5, '# events {}'.format(len(test['events']),
+#                             horizontalalignment='center',
+#                             verticalalignment='center', transform=ax.transAxes))
+#                    plt.show()
                     
         
-            if  ex['n'] == ex['n_conv']-1:
+            if  ex['n'] == ex['n_conv']-1 or ex['n'] == ex['n_stop']:
                 if idx == 0:
                     print('Calculating ROC scores\nDatapoints precursor length '
                       '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),
                        len(ex['test_RV'][0])))
                 
                 # normalize
-                ex['test_ts_mcK'][idx] = (ex['test_ts_mcK'][idx]-np.mean(ex['test_ts_mcK'][idx])/ \
-                                          np.std(ex['test_ts_mcK'][idx]))
-                ex['test_ts_Sem'][idx] = (ex['test_ts_Sem'][idx]-np.mean(ex['test_ts_Sem'][idx])/ \
-                                          np.std(ex['test_ts_Sem'][idx]))                
+                ts_pred_mcK  = ((ex['test_ts_mcK'][idx]-np.mean(ex['test_ts_mcK'][idx]))/ \
+                                          (np.std(ex['test_ts_mcK'][idx]) ) )
+                ts_pred_Sem  = ((ex['test_ts_Sem'][idx]-np.mean(ex['test_ts_Sem'][idx]))/ \
+                                          (np.std(ex['test_ts_Sem'][idx]) ) )
+                norm_test_RV = ((ex['test_RV'][idx]-np.mean(ex['test_RV'][idx]))/ \
+                                          (np.std(ex['test_RV'][idx]) ) )  
+                
+                
+                if ex['plot_ts'] == True:
+                    #%%
+                    threshold = np.std(norm_test_RV)
+                    No_train_yrs = int(train['RV'].size / ex['n_oneyr'])
+                    title = ('Prediction time series versus truth, '
+                             'with {} training years'.format(No_train_yrs))
+                    labels = np.linspace(1,10,norm_test_RV.size, dtype=int)
+                    labels[-1] = labels[-2]
+                    df = pd.DataFrame(data={'RV':norm_test_RV, 'Sem':ts_pred_Sem, 'mcK':ts_pred_mcK, 'plot':labels} )
+                    g = sns.FacetGrid(df, col='plot', col_wrap=3, sharex=False)
+                    n_plots = len(g.axes)
+                    for n_ax in np.arange(0,n_plots):
+                        ax = g.axes.flatten()[n_ax]
+                        df_sub = df[df['plot'] == n_ax+1]
+                        del df_sub['plot']
+                        ax.set_ylim(-3,3)
+                        ax.set_xlim(df_sub['mcK'].index[0],df_sub['mcK'].index[-1])
+                        # should normalize with std from training spatial covariance or logit ts
+                        ax.plot(df_sub['mcK'].index, df_sub['mcK'].values, label='mcK', color='blue')
+                        ax.plot(df_sub['Sem'].index, df_sub['Sem'].values, label='Sem', color='green')
+                        ax.plot(df_sub['RV'],alpha=0.4, label='Truth', color='red')                   
+                        
+                        ax.fill_between(df_sub['RV'].index, threshold, df_sub['RV'].values, 
+                                         where=(df_sub['RV'].values > threshold),
+                                         interpolate=True, color="orange", alpha=0.5, label="hot days")
+                        if n_ax+1 == n_plots:
+                            ax.legend(loc='lower left')
+                    g.fig.text(0.5, 1.02, title, fontsize=15,
+                           fontweight='heavy', horizontalalignment='center')
+#                        plt.text(0.5,0.5, '# events {}'.format(len(test['events']),
+#                                 horizontalalignment='center',
+#                                 verticalalignment='center', transform=ax.transAxes))
+#                    plt.show()
+                       #%%
+#  
                 
 #                Prec_threshold_mcK = np.percentile(ex['test_ts_mcK'][idx], 70)
 #                Prec_threshold_Sem = np.percentile(ex['test_ts_Sem'][idx], 70)
@@ -93,10 +144,10 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
                 
                 n_boot = 10
-                ROC_mcK[idx], ROC_boot = ROC_score(ex['test_ts_mcK'][idx], ex['test_RV'][idx],
+                ROC_mcK[idx], ROC_boot = ROC_score(ts_pred_mcK, ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, n_boot, ex, 'default')
                 if ex['use_ts_logit'] == True:
-                    ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
+                    ROC_Sem[idx] = ROC_score(ts_pred_Sem, ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, 0, ex, 'default')[0]
                 elif ex['use_ts_logit'] == False:
                     ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
@@ -107,7 +158,7 @@ def ROC_score_wrapper(test, trian, ds_mcK, ds_Sem, ex):
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
             
                 
-        elif ex['leave_n_out'] == True and ex['method'] == 'random' :        
+        elif ex['leave_n_out'] == True and ex['method'] == 'random':        
                                
             # check detection of precursor:
             Prec_threshold_mcK = ds_mcK['perc'].sel(percentile=60 /10).values[0]
@@ -393,7 +444,7 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='defau
         for chunk in rand_chunks:
             new_observed.append( observed[chunk] )
         
-        new_observed = np.reshape( new_observed, -1)
+        new_observed = np.reshape( new_observed, -1 )
         # _____________________________________________________________________________
         # calculate new AUC score and store it
         # _____________________________________________________________________________
