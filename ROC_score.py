@@ -26,7 +26,7 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
         dates_test = func_mcK.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
-                                           test['Prec'].time[0].dt.hour)
+                                           test['RV'].time[0].dt.hour)
         # select antecedant SST pattern to summer days:
         dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
         var_test_mcK = func_mcK.find_region(test['Prec'], region=ex['regionmcK'])[0]
@@ -86,7 +86,7 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
 #                    plt.show()
                     
         
-            if  ex['n'] == ex['n_conv']-1 or ex['n'] == ex['n_stop']:
+            if  ex['n'] == ex['n_conv']-1:
                 if idx == 0:
                     print('Calculating ROC scores\nDatapoints precursor length '
                       '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),
@@ -104,41 +104,50 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
                 if ex['plot_ts'] == True:
                     #%%
                     threshold = np.std(norm_test_RV)
-                    No_train_yrs = int(train['RV'].size / ex['n_oneyr'])
-                    title = ('Prediction time series versus truth, '
-                             'with {} training years'.format(No_train_yrs))
+                    No_train_yrs = ex['n_yrs'] - int(test['RV'].size / ex['n_oneyr'])
+                    title = ('Prediction time series versus truth (lag={}), '
+                             'with {} training years'.format(lag, No_train_yrs))
                     labels = np.linspace(1,10,norm_test_RV.size, dtype=int)
-                    labels[-1] = labels[-2]
+#                    labels[-1] = labels[-2]
                     df = pd.DataFrame(data={'RV':norm_test_RV, 'Sem':ts_pred_Sem, 'mcK':ts_pred_mcK, 'plot':labels} )
-                    g = sns.FacetGrid(df, col='plot', col_wrap=3, sharex=False)
+                    df['RVrm'] = df['RV'].rolling(20, center=True, min_periods=5, 
+                          win_type=None).mean()
+                    g = sns.FacetGrid(df, col='plot', col_wrap=2, sharex=False, size=2.5,
+                                      aspect = 2)
                     n_plots = len(g.axes)
                     for n_ax in np.arange(0,n_plots):
                         ax = g.axes.flatten()[n_ax]
                         df_sub = df[df['plot'] == n_ax+1]
                         del df_sub['plot']
                         ax.set_ylim(-3,3)
+#                        ax.set_ylabel('Prediction ts [std]')
+                        ax.hlines(0, df_sub['mcK'].index[0],df_sub['mcK'].index[-1], alpha=.7)
+                        ax.grid(which='major', alpha=0.3)
                         ax.set_xlim(df_sub['mcK'].index[0],df_sub['mcK'].index[-1])
                         # should normalize with std from training spatial covariance or logit ts
-                        ax.plot(df_sub['mcK'].index, df_sub['mcK'].values, label='mcK', color='blue')
-                        ax.plot(df_sub['Sem'].index, df_sub['Sem'].values, label='Sem', color='green')
-                        ax.plot(df_sub['RV'],alpha=0.4, label='Truth', color='red')                   
+                        ax.plot(df_sub['mcK'].index, df_sub['mcK'].values, 
+                                label='mcK', color='green', alpha=0.6)
+                        ax.plot(df_sub['Sem'].index, df_sub['Sem'].values, 
+                                label='Sem', color='blue', alpha=0.9)
+                        ax.plot(df_sub['RV'],alpha=0.4, label='Truth', color='red') 
+                        ax.plot(df_sub['RVrm'],alpha=0.9, label='Truth roll. mean 20', color='black') 
                         
                         ax.fill_between(df_sub['RV'].index, threshold, df_sub['RV'].values, 
                                          where=(df_sub['RV'].values > threshold),
-                                         interpolate=True, color="orange", alpha=0.5, label="hot days")
+                                         interpolate=True, color="orange", alpha=0.7, label="hot days")
                         if n_ax+1 == n_plots:
-                            ax.legend(loc='lower left')
+                            ax.axis('off')
+                            ax.legend(loc='lower center', prop={'size': 15})
                     g.fig.text(0.5, 1.02, title, fontsize=15,
                            fontweight='heavy', horizontalalignment='center')
-#                        plt.text(0.5,0.5, '# events {}'.format(len(test['events']),
-#                                 horizontalalignment='center',
-#                                 verticalalignment='center', transform=ax.transAxes))
-#                    plt.show()
+                    filename = '{} day lead time series prediction'.format(lag)
+                    file_name = os.path.join(ex['folder'],filename+'.png')
+                    g.fig.savefig(file_name ,dpi=250, frameon=True)
+                else:
+                    pass
+
                        #%%
-#  
-                
-#                Prec_threshold_mcK = np.percentile(ex['test_ts_mcK'][idx], 70)
-#                Prec_threshold_Sem = np.percentile(ex['test_ts_Sem'][idx], 70)
+
 #
 #                func_mcK.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
@@ -206,8 +215,8 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
             ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
                                       ex['hotdaythres'], lag, 0, ex, 'default')[0]
             
-            Prec_threshold_Sem = np.percentile(crosscorr_Sem, 70)
-            Prec_threshold_mcK = np.percentile(crosscorr_mcK, 70)
+#            Prec_threshold_Sem = np.percentile(crosscorr_Sem, 70)
+#            Prec_threshold_mcK = np.percentile(crosscorr_mcK, 70)
             
             
 #            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
