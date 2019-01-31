@@ -12,6 +12,7 @@ if sys.version[:1] == '3':
     from importlib import reload as rel
 import func_mcK
 from ROC_score import ROC_score_wrapper
+from ROC_score import plotting_timeseries
 import numpy as np
 import xarray as xr 
 import pandas as pd
@@ -47,7 +48,7 @@ ex = dict(
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
-     'method'       :       'iter',
+     'method'       :       'iter', #87  
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
@@ -166,7 +167,7 @@ if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = True
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 95
@@ -174,110 +175,72 @@ ex['min_n_gc'] = 5
 ex['comp_perc'] = 0.80
 ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
 ex['n_conv'] = ex['n_yrs'] 
-if (
-    ex['leave_n_out'] == True and ex['method'] == 'iter'
-    or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
-    ):
-    ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
-    ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
-    ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
 
 
-#np.save(os.path.join(script_dir, 'ERA_{}_{}_default_settings.npy'.format(
-#        ex['RV_name'], ex['name'])), ex)
+print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear', 
+            'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
+            'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
+            'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
+            'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
+            'pval_logit_first', 'pval_logit_final', 'rollingmean',
+            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
+            'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
+            'add_lsm', 'min_n_gc']
+
+max_key_len = max([len(i) for i in print_ex])
+for key in print_ex:
+    key_len = len(key)
+    expand = max_key_len - key_len
+    key_exp = key + ' ' * expand
+    printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+    print(printline)
+
 
 #%% Run code with ex settings
-#ex['n_conv'] = 3
 
-def main(RV_ts, Prec_reg, ex):
-    if (ex['leave_n_out'] == False) and ex['ROC_leave_n_out'] == False : ex['n_conv'] = 1
-    if ex['method'][:5] == 'split' : ex['n_conv'] = 1
-    if ex['ROC_leave_n_out'] == True: 
-        print('leave_n_out set to False')
-        ex['leave_n_out'] = False
+train_test_list, l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
 
-    
-    train_test_list = []
-    l_ds_Sem        = []
-    l_ds_mcK        = []        
-    
-    for n in range(ex['n_conv']):
-        train_all_test_n_out = (ex['ROC_leave_n_out'] == True) & (n==0) 
-        ex['n'] = n
+# save ex setting in text file
+folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
+#assert (os.path.isdir(folder) != True), 'Overwrite?\n{}'.format(folder)
+if os.path.isdir(folder):
+    answer = input('Overwrite?\n{}\ntype y or n:\n\n'.format(folder))
+    if 'n' in answer:
+        assert (os.path.isdir(folder) != True)
+    elif 'y' in answer:
+        pass
 
-        # do single run
-        
-        # =============================================================================
-        # Create train test set according to settings 
-        # =============================================================================
-        train, test, ex = func_mcK.train_test_wrapper(RV_ts, Prec_reg, ex)
-        
-        # =============================================================================
-        # Calculate Precursor
-        # =============================================================================
-        if train_all_test_n_out == True:
-            # only train once on all years if ROC_leave_n_out == True
-            ds_Sem = func_mcK.extract_precursor(train, test, ex)    
-            if ex['wghts_accross_lags'] == True:
-                ds_Sem['pattern'] = func_mcK.filter_autocorrelation(ds_Sem, ex)
-                
-            ds_mcK = func_mcK.mcKmean(train, ex)  
-                
-        # Force Leave_n_out validation even though pattern is based on whole dataset
-        if (ex['ROC_leave_n_out'] == True) & (ex['n']==0):
-            # start selecting leave_n_out
-            ex['leave_n_out'] = True
-            train, test, ex['test_years'] = func_mcK.rand_traintest(RV_ts, Prec_reg, 
-                                              ex)
-            
-            foldername = 'Pattern_full_leave_{}_out_validation_{}_{}_tf{}_{}'.format(
-                    ex['leave_n_years_out'], ex['startyear'], ex['endyear'], 
-                    ex['tfreq'],ex['lags'])
-        
-            ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
-        
-#        elif (ex['leave_n_out'] == True) & (ex['ROC_leave_n_out'] == False):
-        elif (ex['ROC_leave_n_out'] == False) or ex['method'][:5] == 'split':
-            # train each time on only train years
-            ds_Sem = func_mcK.extract_precursor(train, test, ex)    
-            if ex['wghts_accross_lags'] == True:
-                ds_Sem['pattern'] = func_mcK.filter_autocorrelation(ds_Sem, ex)
-                
-            ds_mcK = func_mcK.mcKmean(train, ex)  
-#        patterns_Sem[n,:,:,:] = ds_Sem['pattern']
-#        patterns_mcK[n,:,:,:] = ds_mcK['pattern'] 
-        
-        
-        #        ex['n'] += 1
-        if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
-            # only need single run
-            break
-        if (ex['method'][:5]=='split'):
-            # only need single run
-            break
-        if (ex['method'][:6] == 'random'):
-            if n == ex['n_stop']:
-                # remove empty n_tests
-#                patterns_Sem = patterns_Sem.sel(n_tests=slice(0,ex['n_stop']))
-#                patterns_mcK = patterns_mcK.sel(n_tests=slice(0,ex['n_stop']))
-                ex['n_conv'] = ex['n_stop']
-                break
-
-        l_ds_Sem.append(ds_Sem)
-        l_ds_mcK.append(ds_mcK)        
-        # deleting large arrays from train and test
-        del train['Prec']
-        del train['RV']
-        # appending tuple
-        train_test_list.append( (train, test) )
-    return train_test_list, l_ds_Sem, l_ds_mcK, ex
+if os.path.isdir(folder) != True : os.makedirs(folder)
+ex['folder'] = folder
 
 
-train_test_list, l_ds_Sem, l_ds_mcK, ex = main(RV_ts, Prec_reg, ex)
+# write output in textfile
+txtfile = os.path.join(folder, 'experiment_settings.txt')
+with open(txtfile, "w") as text_file:
+    max_key_len = max([len(i) for i in print_ex])
+    for key in print_ex:
+        key_len = len(key)
+        expand = max_key_len - key_len
+        key_exp = key + ' ' * expand
+        printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+        print(printline, file=text_file)
+
+      
+
+
 
 #%%
 def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
-
+    
+    if (
+        ex['leave_n_out'] == True and ex['method'] == 'iter'
+        or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
+        ):
+        ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
+    
     ex['score_per_run'] = []
     # Purely train-test based on iterating over all years:
     lats = Prec_reg.latitude
@@ -309,11 +272,13 @@ def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
         if (ex['new_model_sel'] == True) and (ex['use_ts_logit'] == True):
             ds_Sem = func_mcK.NEW_timeseries_for_test(ds_Sem, test, ex)
             # ds_Sem['ts_prediction'].plot()
-        print(int(test['RV'].time.dt.year[0]))
+        print('test year(s) {}, with {} events.'.format(
+                list(set(test['RV'].time.dt.year.values)), test['events'].size))
         # =============================================================================
         # Calculate ROC score
         # =============================================================================
         ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
+            
 #        l_ds_Sem       = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
 #        l_ds_mcK       = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
 
@@ -336,54 +301,11 @@ def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
 
 
 #%%
-# save ex setting in text file
-folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
-#assert (os.path.isdir(folder) != True), 'Overwrite?\n{}'.format(folder)
-if os.path.isdir(folder):
-    answer = input('Overwrite?\n{}\ntype y or n:\n\n'.format(folder))
-    if 'n' in answer:
-        assert (os.path.isdir(folder) != True)
-    elif 'y' in answer:
-        pass
 
-if os.path.isdir(folder) != True : os.makedirs(folder)
-ex['folder'] = folder
 
 ex, patterns_Sem, patterns_mcK = make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex)
- 
 
-
-print_ex = ['RV_name', 'name', 'grid_res', 'startyear', 'endyear', 
-            'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
-            'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
-            'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
-            'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
-            'pval_logit_first', 'pval_logit_final', 'rollingmean',
-            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
-            'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
-            'add_lsm', 'min_n_gc']
-
-max_key_len = max([len(i) for i in print_ex])
-for key in print_ex:
-    key_len = len(key)
-    expand = max_key_len - key_len
-    key_exp = key + ' ' * expand
-    printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
-    print(printline)
-
-
-#folder = '/Users/semvijverberg/Downloads'
-txtfile = os.path.join(folder, 'experiment_settings.txt')
-with open(txtfile, "w") as text_file:
-    max_key_len = max([len(i) for i in print_ex])
-    for key in print_ex:
-        key_len = len(key)
-        expand = max_key_len - key_len
-        key_exp = key + ' ' * expand
-        printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
-        print(printline, file=text_file)
-
-      
+# save output in textfile
 output_dic_folder = folder
 filename = 'output_main_dic'
 if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
@@ -391,6 +313,8 @@ to_dict = dict( {'ex'       :   ex,
                  'patterns_Sem'  :  patterns_Sem,
                  'patterns_mcK'  :  patterns_mcK} )
 np.save(os.path.join(output_dic_folder, filename+'.npy'), to_dict)
+
+
 
 
 
@@ -452,13 +376,16 @@ years = range(ex['startyear'], ex['endyear'])
 
 #n_land = np.sum(np.array(np.isnan(Prec_reg.values[0]),dtype=int) )
 #n_sea = Prec_reg[0].size - n_land
-yrs_to_plot = [1990, 2000, 2010, 2012, 2015]
-for yr in yrs_to_plot: 
-    n = yrs_to_plot.index(yr)
+if ex['method'] == 'iter':
+    test_set_to_plot = [1990, 2000, 2010, 2012, 2015]
+elif ex['method'][:6] == 'random':
+    test_set_to_plot = [set(t[1]['RV'].time.dt.year.values) for t in train_test_list[::5]]
+for yr in test_set_to_plot: 
+    n = test_set_to_plot.index(yr)
     Robustness_weights = l_ds_Sem[n]['weights']
 
     Robustness_weights.attrs['title'] = ('Robustness for single '
-                            'training set ({} left out)'.format(yr))
+                            'training set \n{} left out'.format(yr))
     Robustness_weights.attrs['units'] = 'Weights [{} ... 1]'.format(ex['comp_perc'])
     filename = os.path.join(subfolder, Robustness_weights.attrs['title'].replace(
                             ' ','_')+'.png')
@@ -488,21 +415,32 @@ func_mcK.plot_oneyr_events(RV_ts, ex, 2012, folder, saving=True)
 ## plotting same figure as in paper
 #for i in range(2005, 2010):
 #    func_mcK.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
-#%% Counting times gridcells were extracted
+#%% Robustness accross training sets
+lats = Prec_reg.latitude
+lons = Prec_reg.longitude
+array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+wgts_tests = xr.DataArray(data=array, 
+                coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+                dims=['n_tests', 'lag','latitude','longitude'], 
+                name='{}_tests_wghts'.format(ex['n_conv']), attrs={'units':'wghts ['})
+for n in range(ex['n_conv']):
+    wgts_tests[n,:,:,:] = l_ds_Sem[n]['weights']
+    
+    
 if ex['leave_n_out']:
     n_lags = patterns_Sem.sel(n_tests=0).lag.size
     n_lats = patterns_Sem.sel(n_tests=0).latitude.size
     n_lons = patterns_Sem.sel(n_tests=0).longitude.size
     
     pers_patt = patterns_Sem.sel(n_tests=0).copy()
-    arrpatt = np.nan_to_num(patterns_Sem.values)
-    mask_patt = (arrpatt != 0)
-    arrpatt[mask_patt] = 1
+#    arrpatt = np.nan_to_num(patterns_Sem.values)
+#    mask_patt = (arrpatt != 0)
+#    arrpatt[mask_patt] = 1
     wghts = np.zeros( (n_lags, n_lats, n_lons) )
 #    plt.imshow(arrpatt[0,0]) ; plt.colorbar()
     for l in ex['lags']:
         i = ex['lags'].index(l)
-        wghts[i] = np.sum(arrpatt[:,i,:,:], axis=0)
+        wghts[i] = np.sum(wgts_tests[:,i,:,:], axis=0)
     pers_patt.values = wghts
     pers_patt = pers_patt.where(pers_patt.values != 0)
     pers_patt.attrs['units'] = 'No. of times in final pattern [0 ... {}]'.format(ex['n_conv'])
@@ -512,7 +450,7 @@ if ex['leave_n_out']:
     vmax = pers_patt.max().values+1E-9
     kwrgs = dict( {'title' : pers_patt.attrs['title'], 'clevels' : 'notdefault', 
                    'steps' : 11, 'subtitles': ROC_str_Sem, 
-                   'vmin' : max(0,vmax-10), 'vmax' : vmax, 
+                   'vmin' : max(0,vmax-20), 'vmax' : vmax, 
                    'cmap' : plt.cm.hot_r, 'column' : 2, 'extend':['min','yellow'],
                    'cbar_vert' : 0.05, 'cbar_hght' : 0.01,
                    'adj_fig_h' : 1.25, 'adj_fig_w' : 1., 
@@ -547,6 +485,10 @@ if ex['leave_n_out']:
 #                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
         func_mcK.plotting_wrapper(mean_n_patterns, filename, ex, kwrgs=kwrgs)
 
+
+#%% Plotting prediciton time series vs truth:
+test = train_test_list[0][1]        
+plotting_timeseries(test, ex) 
 
 #%% Initial regions from only composite extraction:
 
@@ -604,21 +546,23 @@ if ex['leave_n_out']:
 
 
 #%% Load data
-import numpy as np
-import os
-import xarray as xr
-output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[5, 15, 30, 50]_mcKthresp_2.5deg_60nyr_0.05False_tsFalse_95tperc_0.8tc_1_2019-01-28')
-
-#
-filename = 'output_main_dic'
-#
-dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
-ex = dic['ex']
-patterns_Sem = dic['patterns_Sem']
-patterns_mcK = dic['patterns_mcK']
-if 'startperiod' not in ex.keys():
-    ex['startperiod'] = ex['sstartdate'][-5:]
-    ex['endperiod'] = ex['senddate'][-5:]
+answer = input("You sure you want to load data, y or n?")
+if answer == 'y':
+    import numpy as np
+    import os
+    import xarray as xr
+    output_dic_folder = ('/Users/semvijverberg/surfdrive/McKinRepl/T2mmax_sst_Northern_PEPrectangle/random_leave_6_out_1979_2017_tf1_[5, 15, 30, 50]nyr_60')
+    
+    #
+    filename = 'output_main_dic'
+    #
+    dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
+    ex = dic['ex']
+    patterns_Sem = dic['patterns_Sem']
+    patterns_mcK = dic['patterns_mcK']
+    if 'startperiod' not in ex.keys():
+        ex['startperiod'] = ex['sstartdate'][-5:]
+        ex['endperiod'] = ex['senddate'][-5:]
 
 
 #%%

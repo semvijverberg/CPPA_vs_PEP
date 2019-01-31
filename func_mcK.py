@@ -22,6 +22,78 @@ import scipy
 flatten = lambda l: [item for sublist in l for item in sublist]
 
 
+def main(RV_ts, Prec_reg, ex):
+    if (ex['leave_n_out'] == False) and ex['ROC_leave_n_out'] == False : ex['n_conv'] = 1
+    if ex['method'][:5] == 'split' : ex['n_conv'] = 1
+    if ex['ROC_leave_n_out'] == True: 
+        print('leave_n_out set to False')
+        ex['leave_n_out'] = False
+
+    
+    train_test_list = []
+    l_ds_Sem        = []
+    l_ds_mcK        = []        
+    
+    for n in range(ex['n_conv']):
+        train_all_test_n_out = (ex['ROC_leave_n_out'] == True) & (n==0) 
+        ex['n'] = n
+        # do single run    
+        # =============================================================================
+        # Create train test set according to settings 
+        # =============================================================================
+        train, test, ex = train_test_wrapper(RV_ts, Prec_reg, ex)       
+        # =============================================================================
+        # Calculate Precursor
+        # =============================================================================
+        if train_all_test_n_out == True:
+            # only train once on all years if ROC_leave_n_out == True
+            ds_Sem = extract_precursor(train, test, ex)    
+            if ex['wghts_accross_lags'] == True:
+                ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
+                
+            ds_mcK = mcKmean(train, ex)             
+        # Force Leave_n_out validation even though pattern is based on whole dataset
+        if (ex['ROC_leave_n_out'] == True) & (ex['n']==0):
+            # start selecting leave_n_out
+            ex['leave_n_out'] = True
+            train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
+                                              ex)    
+            foldername = 'Pattern_full_leave_{}_out_validation_{}_{}_tf{}_{}'.format(
+                    ex['leave_n_years_out'], ex['startyear'], ex['endyear'], 
+                    ex['tfreq'],ex['lags'])
+        
+            ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
+        
+#        elif (ex['leave_n_out'] == True) & (ex['ROC_leave_n_out'] == False):
+        elif (ex['ROC_leave_n_out'] == False) or ex['method'][:5] == 'split':
+            # train each time on only train years
+            ds_Sem = extract_precursor(train, test, ex)    
+            if ex['wghts_accross_lags'] == True:
+                ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
+                
+            ds_mcK = mcKmean(train, ex)  
+            
+            
+        if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
+            # only need single run
+            break
+        if (ex['method'][:5]=='split'):
+            # only need single run
+            break
+        if (ex['method'][:6] == 'random'):
+            if n == ex['n_stop']:
+                ex['n_conv'] = ex['n_stop']
+                break
+        l_ds_Sem.append(ds_Sem)
+        l_ds_mcK.append(ds_mcK)        
+        # deleting large arrays from train and test
+        del train['Prec']
+        del train['RV']
+        # appending tuple
+        train_test_list.append( (train, test) )
+    return train_test_list, l_ds_Sem, l_ds_mcK, ex
+
+
 # =============================================================================
 # =============================================================================
 # Wrapper functions
@@ -97,9 +169,12 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         
-        ex['exp_folder'] = 'random_leave_{}_out_{}_{}_tf{}_{}nyr_{}'.format(ex['leave_n_years_out'],
-                            ex['startyear'], ex['endyear'], ex['tfreq'],
-                            ex['lags'], ex['n_oneyr'])
+        ex['exp_folder'] = '{}_leave_{}_out_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}{}_ts{}_{}tperc_{}tc_{}_{}'.format(
+                                ex['method'], ex['leave_n_years_out'], ex['startyear'], ex['endyear'],
+                              ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
+                              ex['n_oneyr'], ex['pval_logit_final'], ex['logit_valid'],
+                              ex['use_ts_logit'],
+                              ex['perc_map'], ex['comp_perc'], ex['rollingmean'], now.strftime("%Y-%m-%d"))
       
         
     if ex['leave_n_out'] == True and ex['method'][:5] == 'split':
@@ -1267,11 +1342,15 @@ def rand_traintest(RV_ts, Prec_reg, ex):
             size_train = int(np.percentile(range(len(all_years)), int(ex['method'][6:])))
             size_test  = len(all_years) - size_train
             ex['leave_n_years_out'] = size_test
-            ex['n_stop'] = int(len(all_years) / size_test) + 1
+            ex['n_stop'] = int(len(all_years) / size_test) + 33
             rand_test_years = np.random.choice(all_years, ex['leave_n_years_out'], replace=False)
         elif ex['method'] == 'iter':
             ex['leave_n_years_out'] = 1
-            rand_test_years = [all_years[ex['n']]]
+            if ex['n'] >= ex['n_yrs']:
+                n = ex['n'] - ex['n_yrs']
+            else:
+                n = ex['n']
+            rand_test_years = [all_years[n]]
         elif ex['method'][:5] == 'split':
             size_train = int(np.percentile(range(len(all_years)), int(ex['method'][5:])))
             size_test  = len(all_years) - size_train
