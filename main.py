@@ -51,7 +51,7 @@ ex = dict(
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
-     'method'       :       'random90', #87  
+     'method'       :       'iter', #87  
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
@@ -176,7 +176,7 @@ if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = True
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [5] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 95
@@ -206,6 +206,8 @@ def printset(print_ex=print_ex, ex=ex):
 
 printset()
 #%% Run code with ex settings
+
+#Prec_reg = Prec_reg/Prec_reg.std(dim='time')
 
 ex['train_test_list'], l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
 
@@ -277,12 +279,14 @@ def make_prediction(l_ds_Sem, l_ds_mcK, ex):
         # =============================================================================
         # Make prediction based on logit model found in 'extract_precursor'
         # =============================================================================
-        if (ex['new_model_sel'] == False) and (ex['use_ts_logit'] == True):
+        if ex['use_ts_logit'] == True:
+            ds_Sem = func_mcK.logit_fit(ds_Sem, Prec_reg, train, ex)
             ds_Sem = func_mcK.timeseries_for_test(ds_Sem, test, ex)
-#            print(ds_Sem['ts_prediction'][0])
+            name_for_ts = 'logit'
     
-        if (ex['new_model_sel'] == True) and (ex['use_ts_logit'] == True):
-            ds_Sem = func_mcK.NEW_timeseries_for_test(ds_Sem, test, ex)
+        elif ex['use_ts_logit'] == False:
+            name_for_ts = 'CPPA'
+        
             # ds_Sem['ts_prediction'].plot()
         print('test year(s) {}, with {} events.'.format(
                 list(set(test['RV'].time.dt.year.values)), test['events'].size))
@@ -303,7 +307,7 @@ def make_prediction(l_ds_Sem, l_ds_mcK, ex):
                 ex['n_conv'] = ex['n_stop']
         
         
-        patterns_Sem[n,:,:,:] = l_ds_Sem[n]['pattern']
+        patterns_Sem[n,:,:,:] = l_ds_Sem[n]['pattern_' + name_for_ts]
         patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
         
         
@@ -313,7 +317,7 @@ def make_prediction(l_ds_Sem, l_ds_mcK, ex):
 
 
 
-#%%
+
 
 
 ex, patterns_Sem, patterns_mcK = make_prediction(l_ds_Sem, l_ds_mcK, ex)
@@ -524,12 +528,11 @@ if ex['leave_n_out']:
     years = range(ex['startyear'], ex['endyear'])
     for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
         yr = years[n]
-        pattern_num_init = l_ds_Sem[n]['pattern_num_init']
+        pattern_num_init = l_ds_Sem[n]['pat_num_CPPA']
         
 
 
-        pattern_num_init.attrs['title'] = ('{} - initial regions extracted from '
-                              'composite approach'.format(yr))
+        pattern_num_init.attrs['title'] = ('{} - CPPA regions'.format(yr))
         filename = os.path.join(subfolder, pattern_num_init.attrs['title'].replace(
                                 ' ','_')+'.png')
         for_plt = pattern_num_init.copy()
@@ -542,7 +545,7 @@ if ex['leave_n_out']:
         func_mcK.plotting_wrapper(for_plt, filename, ex, kwrgs=kwrgs)
         
         if ex['logit_valid'] == True:
-            pattern_num = l_ds_Sem[n]['pattern_num']
+            pattern_num = l_ds_Sem[n]['pat_num_logit']
             pattern_num.attrs['title'] = ('{} - regions that were kept after logit regression '
                                          'pval < {}'.format(yr, ex['pval_logit_final']))
             filename = os.path.join(subfolder, pattern_num.attrs['title'].replace(

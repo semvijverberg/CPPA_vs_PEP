@@ -48,7 +48,7 @@ def main(RV_ts, Prec_reg, ex):
         # =============================================================================
         if train_all_test_n_out == True:
             # only train once on all years if ROC_leave_n_out == True
-            ds_Sem = extract_precursor(train, test, ex)    
+            ds_Sem = extract_precursor(Prec_reg, train, test, ex)    
             if ex['wghts_accross_lags'] == True:
                 ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
                 
@@ -68,11 +68,12 @@ def main(RV_ts, Prec_reg, ex):
 #        elif (ex['leave_n_out'] == True) & (ex['ROC_leave_n_out'] == False):
         elif (ex['ROC_leave_n_out'] == False) or ex['method'][:5] == 'split':
             # train each time on only train years
-            ds_Sem = extract_precursor(train, test, ex)    
+            ds_Sem = extract_precursor(Prec_reg, train, test, ex)    
+            
             if ex['wghts_accross_lags'] == True:
                 ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
                 
-            ds_mcK = mcKmean(train, ex)  
+            ds_mcK = mcKmean(Prec_reg, train, ex)  
             
             
         if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
@@ -87,9 +88,7 @@ def main(RV_ts, Prec_reg, ex):
                 break
         l_ds_Sem.append(ds_Sem)
         l_ds_mcK.append(ds_mcK)        
-        # deleting large arrays from train and test
-        del train['Prec']
-        del train['RV']
+        
         # appending tuple
         train_test_list.append( (train, test) )
     return train_test_list, l_ds_Sem, l_ds_mcK, ex
@@ -101,11 +100,12 @@ def main(RV_ts, Prec_reg, ex):
 # =============================================================================
 # =============================================================================
 
-def mcKmean(train, ex):
-
-    Prec_train_mcK = find_region(train['Prec'], region=ex['region'])[0]
+def mcKmean(Prec_reg, train, ex):
+    
+    Prec_train = Prec_reg.isel(time=train['Prec_train_idx'])
+    Prec_train_mcK = find_region(Prec_train, region=ex['region'])[0]
     dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
-                                           train['Prec'].time[0].dt.hour)
+                                           Prec_train.time[0].dt.hour)
 #        time = Prec_train_mcK.time
     lats = Prec_train_mcK.latitude
     lons = Prec_train_mcK.longitude
@@ -226,57 +226,42 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
     return train, test, ex
         
 
-def extract_precursor(train, test, ex):
+def extract_precursor(Prec_reg, train, test, ex):
     #%%
-    lats = train['Prec'].latitude
-    lons = train['Prec'].longitude
-    pthresholds = np.linspace(1, 9, 9, dtype=int)
+    Prec_train = Prec_reg.isel(time=train['Prec_train_idx'])
+    lats = Prec_train.latitude
+    lons = Prec_train.longitude
     
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
-    pattern_p1 = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+    pattern_CPPA = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='communities_composite',
                           attrs={'units':'Kelvin'})
-    
-    pattern_p2 = pattern_p1.copy()
 
 
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
-    pattern_num_init = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+    pat_num_CPPA = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='commun_numb_init', 
                           attrs={'units':'Precursor regions'})
 
-    pattern_num = pattern_num_init.copy()
-    pattern_num.name = 'commun_numbered'
+    pat_num_CPPA.name = 'commun_numbered'
     
-    weights     = pattern_p1.copy()
+    weights     = pattern_CPPA.copy()
     weights.name = 'weights'
+   
 
-    logit_model = []
+#    Actors_ts_GPH = [[] for i in ex['lags']] #!
     
-    ex['ts_train_std'] = []
-    
-    combs_reg_kept = np.zeros( len(ex['lags']), dtype=list)
-    
-
-    array = np.zeros( (len(ex['lags']), len(pthresholds)) )
-    pattern_p = xr.DataArray(data=array, coords=[ex['lags'], pthresholds], 
-                          dims=['lag','percentile'], name='Sem_mean_p_diff_lags')
-
-    
-    
-    Actors_ts_GPH = [[] for i in ex['lags']] #!
-    
-    x = 0
+#    x = 0
     for lag in ex['lags']:
 #            i = ex['lags'].index(lag)
         idx = ex['lags'].index(lag)
         event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
-                                           train['Prec'].time[0].dt.hour)
+                                           Prec_train.time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
         
         dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
-                                           train['Prec'].time[0].dt.hour)
+                                           Prec_train.time[0].dt.hour)
         dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
         
         ### exlude leap days ###
@@ -299,48 +284,25 @@ def extract_precursor(train, test, ex):
         event_idx = [list(dates_train.values).index(E) for E in event_train.values]
         binary_events = np.zeros(dates_train.size)    
         binary_events[event_idx] = 1
-        ts_3d = train['Prec'].sel(time=dates_train_min_lag)
+        ts_3d = Prec_train.sel(time=dates_train_min_lag)
         #%%
         # extract precursor regions composite approach
         composite_p1, xrnpmap_p1, list_region_info, bin_event_trainwghts = extract_regs_p1(
                                                 events_min_lag, ts_3d, binary_events, ex)  
 #        composite_p1.plot() 
 #        xrnpmap_p1.plot()
-        composite_p2, wghts, xrnpmap_p2, combs_kept, logitmodel = logit_fit(composite_p1, 
-                                               list_region_info, bin_event_trainwghts, ex)
-#        composite_p2.plot()  
-#        xrnpmap_p2.plot()        
+     
 
-        pattern_p1[idx] = composite_p1
-        pattern_p2[idx] = composite_p2
+        pattern_CPPA[idx] = composite_p1
         
-        pattern_num_init[idx] = xrnpmap_p1
+        pat_num_CPPA[idx] = xrnpmap_p1
         
-        if type(xrnpmap_p2) == type(None):
-            pattern_num[idx] = xrnpmap_p1
-#            pattern_num[idx].coords['mask'] = xrnpmap_p1.mask
-        else:
-            pattern_num[idx] = xrnpmap_p2 
         
-        weights[idx] = wghts 
-        combs_reg_kept[idx] = combs_kept
-        logit_model.append( logitmodel )
+        weights[idx] = list_region_info[-1] 
+
         
-#        # not using pattern covariance, but ts_from_logit
-#        crosscorr_Sem = cross_correlation_patterns(ts_3d, composite_p1)
-##        crosscorr_Sem.values = ts_regions_lag_i
-##        crosscorr_Sem['time'] = pattern_ts.time
-##        pattern_ts[idx] = crosscorr_Sem
-#        # Percentile values based on training dataset
-#        p_pred = []
-#        for p in pthresholds:	
-#            p_pred.append(np.percentile(crosscorr_Sem.values, p*10))
-#        pattern_p[idx] = p_pred
-        
-    ds_Sem = xr.Dataset( {'pattern' : pattern_p2, 'pattern_p1' : pattern_p1, 
-                          'weights' : weights, 'pattern_num_init' : pattern_num_init,
-                          'pattern_num' : pattern_num, 'logitmodel' : logit_model,
-                          'combs_kept' : combs_reg_kept} )
+    ds_Sem = xr.Dataset( {'pattern_CPPA' : pattern_CPPA, 'pat_num_CPPA' : pat_num_CPPA,
+                          'weights' : weights } )
                           
                           
                           
@@ -368,7 +330,7 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
 
 
     ts_3d_trainwghts = ts_3d.copy()
-    ts_3d_trainwghts = ts_3d_trainwghts/ts_3d_trainwghts.std(dim='time')
+#    ts_3d_trainwghts = ts_3d_trainwghts/ts_3d_trainwghts.std(dim='time')
     bin_event_trainwghts = binary_events
     
 # =============================================================================
@@ -533,8 +495,8 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     composite_p1 = ts_3d.sel(time=events_min_lag).mean(dim='time')
     nparray_comp = np.reshape(np.nan_to_num(composite_p1.values), (composite_p1.size))
     Corr_Coeff = np.ma.MaskedArray(nparray_comp, mask=mask_final)
-    lat_grid = mean.latitude.values
-    lon_grid = mean.longitude.values
+    lat_grid = composite_p1.latitude.values
+    lon_grid = composite_p1.longitude.values
 
 
     # retrieve regions sorted in order of 'strength'
@@ -587,10 +549,10 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     return composite_p1, xrnpmap_init, list_region_info, bin_event_trainwghts
 
 
-def logit_fit2(ds_Sem, Prec_reg, train, ex):
+def logit_fit(ds_Sem, Prec_reg, train, ex):
 #%%
-    lats = train['Prec'].latitude
-    lons = train['Prec'].longitude
+    lats = Prec_reg.latitude
+    lons = Prec_reg.longitude
     
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
     pattern_p2 = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
@@ -600,11 +562,15 @@ def logit_fit2(ds_Sem, Prec_reg, train, ex):
 
 
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
-    pattern_num = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+    pattern_num_p2 = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='commun_numb_init', 
                           attrs={'units':'Precursor regions'})
-    pattern_num.name = 'commun_numbered'
+    pattern_num_p2.name = 'commun_numbered'
     
+#    array = np.zeros( (len(ex['lags'])) )
+#    logit_model = xr.DataArray(data=array, coords=[ex['lags']], 
+#                          dims=['lag'], name='logitmodel')
+                          
 
     logit_model = []
     
@@ -620,10 +586,10 @@ def logit_fit2(ds_Sem, Prec_reg, train, ex):
         idx = ex['lags'].index(lag)
         event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
-                                           train['Prec'].time[0].dt.hour)
+                                           train['RV'].time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
         dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
-                                           train['Prec'].time[0].dt.hour)
+                                           train['RV'].time[0].dt.hour)
         dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
         ### exlude leap days ###
         # no leap days in dates_train_min_lag
@@ -643,88 +609,28 @@ def logit_fit2(ds_Sem, Prec_reg, train, ex):
         binary_events[event_idx] = 1
         
         
-
         np.warnings.filterwarnings('ignore')
-        mask = ds_Sem['pattern_num_init'].sel(lag=lag).values >= 1
+        mask = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
         # normal mean of extracted regions
-        composite_p1 = ds_Sem['pattern'].sel(lag=lag).where(mask==True)
+        composite_p1 = ds_Sem['pattern_CPPA'].sel(lag=lag).where(mask==True)
         # actor/precursor full 3d timeseries at RV period minus lag
-        ts_3d = train['Prec'].sel(time=dates_train_min_lag)
-        ts_3d_n = ts_3d/ts_3d.std(dim='time')
-        ts_3d_nw = ts_3d_n * ds_Sem['weights'].sel(lag=lag)
-        mean_n = composite_p1/ts_3d.std(dim='time')
-        regions_for_ts = np.arange(ds_Sem['pattern_num_init'].min(), ds_Sem['pattern_num_init'].max())
-        Regions_lag_i = ds_Sem['pattern_num_init'].squeeze().values
+        Prec_trainsel = Prec_reg.isel(time=train['Prec_train_idx'])
+        ts_3d = Prec_trainsel.sel(time=dates_train_min_lag)
+#        ts_3d_n = ts_3d/ts_3d.std(dim='time')
+        ts_3d_nw = ts_3d * ds_Sem['weights'].sel(lag=lag)
+        
+
+        
+        regions_for_ts = np.arange(ds_Sem['pat_num_CPPA'].min(), ds_Sem['pat_num_CPPA'][idx].max())
+        Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
+#        mean_n = composite_p1/ts_3d.std(dim='time')
+        npmean        = composite_p1.values
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                regions_for_ts, ts_3d_nw, mean_n)[:2]
+                                regions_for_ts, ts_3d_nw, npmean)[:2]
                                          
 
         
-        if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
-            lat_grid = composite_p1.latitude.values
-            lon_grid = composite_p1.longitude.values
-            
-            
-            # get wgths and only regions that contributed to probability    
-            if ex['new_model_sel'] == False:
-                odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
-                        ts_regions_lag_i, sign_ts_regions, binary_events, ex)
-        
-            if ex['new_model_sel'] == True:
-                odds, regions_kept, combs_kept, logitmodel = NEW_train_weights_LogReg(
-                        ts_regions_lag_i, sign_ts_regions, binary_events, ex)
-                
-            upd_regions = np.zeros(Regions_lag_i.shape)
-            for i in range(len(regions_kept)):
-                reg = regions_kept[i]
-                upd_regions[Regions_lag_i == reg] =  i+1
-        
-            # create map of precursor regions
-            npmap = np.ma.reshape(upd_regions, (len(lat_grid), len(lon_grid)))
-            mask_strongest = (npmap!=0) 
-            npmap[mask_strongest==False] = 0
-            xrnpmap = composite_p1.copy()
-            xrnpmap.values = npmap
-            
-            # update the mask for the composite mean
-            mask = (('latitude', 'longitude'), mask_strongest)
-            composite_p1.coords['mask'] = mask
-            xrnpmap.coords['mask'] = mask
-            xrnpmap = xrnpmap.where(xrnpmap.mask==True)
-            norm_mean = composite_p1.where(xrnpmap.mask==True)
-            
-        #    plt.figure()
-        #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
-            
-        if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
-            xrnpmap = None
-            combs_kept = None
-            logitmodel = None
-            ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
-            
-        
-        pattern_p2[idx] = norm_mean * ds_Sem['weights'].sel(lag=lag) 
-        pattern_num[idx] = xrnpmap
-        logit_model.append(logitmodel)
-    ds_Sem['pattern_p1'] = pattern_p2
-    ds_Sem['pattern_num'] = pattern_num
-    ds_Sem['logitmodel'] = logitmodel
-        
-#    plt.figure() 
-#    weighted_mean.plot.contourf()
-    #%%
-    return pattern_p2, pattern_num, logitmodel #weighted_mean, xrwghts_comp, xrnpmap, combs_kept, logitmodel
 
-
-def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
-#%%
-    
-    # normal mean of extracted regions
-    norm_mean = composite_p1.where(composite_p1.mask==True)
-    weights_comp = list_region_info[-1]
-    ts_regions_lag_i, sign_ts_regions = list_region_info[1], list_region_info[2] 
-    
-    if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
         lat_grid = composite_p1.latitude.values
         lon_grid = composite_p1.longitude.values
         
@@ -732,13 +638,12 @@ def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
         # get wgths and only regions that contributed to probability    
         if ex['new_model_sel'] == False:
             odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
-                    ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
+                    ts_regions_lag_i, sign_ts_regions, binary_events, ex)
     
         if ex['new_model_sel'] == True:
             odds, regions_kept, combs_kept, logitmodel = NEW_train_weights_LogReg(
-                    ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
+                    ts_regions_lag_i, sign_ts_regions, binary_events, ex)
             
-        Regions_lag_i = list_region_info[0]
         upd_regions = np.zeros(Regions_lag_i.shape)
         for i in range(len(regions_kept)):
             reg = regions_kept[i]
@@ -761,22 +666,194 @@ def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
     #    plt.figure()
     #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
         
-    if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
-        xrnpmap = None
-        combs_kept = None
-        logitmodel = None
-        ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
+#        if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
+#            xrnpmap = None
+#            combs_kept = None
+#            logitmodel = None
+#            ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
+            
         
-    
-    weighted_mean = norm_mean * weights_comp 
-    xrwghts_comp = norm_mean.copy()
-    xrwghts_comp.values = weights_comp
-    
-
+        pattern_p2[idx] = norm_mean * ds_Sem['weights'].sel(lag=lag) 
+        pattern_num_p2[idx] = xrnpmap
+        logit_model.append(logitmodel)
+    ds_Sem['pattern_logit'] = pattern_p2
+    ds_Sem['pat_num_logit'] = pattern_num_p2
+    ds_Sem.attrs['logitmodel'] = logit_model
+    combs_reg_kept[idx] = combs_kept # are sign of ts when ex['new_model_sel']==False
 #    plt.figure() 
 #    weighted_mean.plot.contourf()
     #%%
-    return weighted_mean, xrwghts_comp, xrnpmap, combs_kept, logitmodel
+    return ds_Sem 
+
+
+def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, npmean):
+    #%%
+    n_time   = ts_3d.time.size
+    lat_grid = ts_3d.latitude
+    lon_grid = ts_3d.longitude
+    regions_for_ts = list(regions_for_ts)
+    
+    actbox = np.reshape(ts_3d.values, (n_time, 
+                  lat_grid.size*lon_grid.size))  
+    
+    # get lonlat array of area for taking spatial means 
+    lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
+    cos_box = np.cos(np.deg2rad(lats_gph))
+    cos_box_array = np.repeat(cos_box[None,:], actbox.shape[0], 0)
+    cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
+    
+
+    # this array will be the time series for each feature
+    ts_regions_lag_i = np.zeros((actbox.shape[0], len(regions_for_ts)))
+    
+    # track sign of eacht region
+    sign_ts_regions = np.zeros( len(regions_for_ts) )
+    
+    # std regions
+    std_regions     = np.zeros( (len(regions_for_ts)) )
+    
+    # composite needed for sign
+    meanbox = np.reshape(npmean, (lat_grid.size*lon_grid.size))
+    
+    if Regions_lag_i.shape == actbox[0].shape:
+        Regions = Regions_lag_i
+    elif Regions_lag_i.shape == (lat_grid.shape[0], lon_grid.shape[0]):
+        Regions = np.reshape(Regions_lag_i, (Regions_lag_i.size))
+    # calculate area-weighted mean over features
+    for r in regions_for_ts:
+        idx = regions_for_ts.index(r)
+        # start with empty lonlat array
+        B = np.zeros(Regions.shape)
+        # Mask everything except region of interest
+        B[Regions == r] = 1	
+        # Calculates how values inside region vary over time
+        ts_regions_lag_i[:,idx] = np.nanmean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
+        # get sign of region
+        sign_ts_regions[idx] = np.sign(np.mean(meanbox[B==1]))
+#    print(sign_ts_regions)
+        
+    std_regions = np.std(ts_regions_lag_i, axis=0)
+    #%%
+    return ts_regions_lag_i, sign_ts_regions, std_regions
+
+
+def timeseries_for_test(ds_Sem, test, ex):
+    #%%
+    time = test['RV'].time
+    
+    array = np.zeros( (len(ex['lags']), len(time)) )
+    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time.values], 
+                          dims=['lag','time'], name='ts_predict_logit',
+                          attrs={'units':'Kelvin'})
+    ds_Sem['ts_prediction'] = ts_predic
+
+    
+    for lag in ex['lags']:
+        idx = ex['lags'].index(lag)
+        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+                                           test['Prec'].time[0].dt.hour)
+        # select antecedant SST pattern to summer days:
+        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
+        var_test_mcK = find_region(test['Prec'], region=ex['regionmcK'])[0]
+    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+    
+        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
+        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
+        
+        # add more weight based on robustness
+        
+        
+        mean = ds_Sem['pattern_logit'].sel(lag=lag)
+        mean = np.reshape(mean.values, (mean.size))
+
+        xrpattern_lag_i = ds_Sem['pat_num_logit'].sel(lag=lag)
+        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
+        
+        var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
+        
+        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
+                        xrpattern_lag_i.values, regions_for_ts, 
+                        var_test_reg, mean)[:2]
+
+
+        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
+        # normalize time series (as done in the training)        
+        X_n = ts_regions_lag_i / ex['ts_train_std'][idx]
+        
+        logit_model_lag_i = ds_Sem.attrs['logitmodel'][idx]
+        ts_pred = logit_model_lag_i.predict(X_n)
+        ts_predic[idx] = ts_pred
+    if ex['n'] != 0:
+        # make sure time axis align, otherwise it gives nans
+        ds_Sem['ts_prediction']['time'].values = time
+    ds_Sem['ts_prediction'] = ts_predic
+#    print(ds_Sem['ts_prediction'])
+    
+    #%%
+    return ds_Sem
+
+
+#def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
+##%%
+#    
+#    # normal mean of extracted regions
+#    norm_mean = composite_p1.where(composite_p1.mask==True)
+#    weights_comp = list_region_info[-1]
+#    ts_regions_lag_i, sign_ts_regions = list_region_info[1], list_region_info[2] 
+#    
+#    if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
+#        lat_grid = composite_p1.latitude.values
+#        lon_grid = composite_p1.longitude.values
+#        
+#        
+#        # get wgths and only regions that contributed to probability    
+#        if ex['new_model_sel'] == False:
+#            odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
+#                    ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
+#    
+#        if ex['new_model_sel'] == True:
+#            odds, regions_kept, combs_kept, logitmodel = NEW_train_weights_LogReg(
+#                    ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
+#            
+#        Regions_lag_i = list_region_info[0]
+#        upd_regions = np.zeros(Regions_lag_i.shape)
+#        for i in range(len(regions_kept)):
+#            reg = regions_kept[i]
+#            upd_regions[Regions_lag_i == reg] =  i+1
+#    
+#        # create map of precursor regions
+#        npmap = np.ma.reshape(upd_regions, (len(lat_grid), len(lon_grid)))
+#        mask_strongest = (npmap!=0) 
+#        npmap[mask_strongest==False] = 0
+#        xrnpmap = composite_p1.copy()
+#        xrnpmap.values = npmap
+#        
+#        # update the mask for the composite mean
+#        mask = (('latitude', 'longitude'), mask_strongest)
+#        composite_p1.coords['mask'] = mask
+#        xrnpmap.coords['mask'] = mask
+#        xrnpmap = xrnpmap.where(xrnpmap.mask==True)
+#        norm_mean = composite_p1.where(xrnpmap.mask==True)
+#        
+#    #    plt.figure()
+#    #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
+#        
+#    if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
+#        xrnpmap = None
+#        combs_kept = None
+#        logitmodel = None
+#        ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
+#        
+#    
+#    weighted_mean = norm_mean * weights_comp 
+#    xrwghts_comp = norm_mean.copy()
+#    xrwghts_comp.values = weights_comp
+#    
+#
+##    plt.figure() 
+##    weighted_mean.plot.contourf()
+#    #%%
+#    return weighted_mean, xrwghts_comp, xrnpmap, combs_kept, logitmodel
 
 
 
@@ -1040,111 +1117,6 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
     #%%        
     return odds, track_r_kept, sign_r_kept, logitmodel
 
-def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
-    #%%
-    n_time   = ts_3d.time.size
-    lat_grid = ts_3d.latitude
-    lon_grid = ts_3d.longitude
-    regions_for_ts = list(regions_for_ts)
-    
-    actbox = np.reshape(ts_3d.values, (n_time, 
-                  lat_grid.size*lon_grid.size))  
-    
-    # get lonlat array of area for taking spatial means 
-    lons_gph, lats_gph = np.meshgrid(lon_grid, lat_grid)
-    cos_box = np.cos(np.deg2rad(lats_gph))
-    cos_box_array = np.repeat(cos_box[None,:], actbox.shape[0], 0)
-    cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
-    
-
-    # this array will be the time series for each feature
-    ts_regions_lag_i = np.zeros((actbox.shape[0], len(regions_for_ts)))
-    
-    # track sign of eacht region
-    sign_ts_regions = np.zeros( len(regions_for_ts) )
-    
-    # std regions
-    std_regions     = np.zeros( (len(regions_for_ts)) )
-    
-    # composite needed for sign
-    meanbox = np.reshape(mean.values, (lat_grid.size*lon_grid.size))
-    
-    if Regions_lag_i.shape == actbox[0].shape:
-        Regions = Regions_lag_i
-    elif Regions_lag_i.shape == (lat_grid.shape[0], lon_grid.shape[0]):
-        Regions = np.reshape(Regions_lag_i, (Regions_lag_i.size))
-    # calculate area-weighted mean over features
-    for r in regions_for_ts:
-        idx = regions_for_ts.index(r)
-        # start with empty lonlat array
-        B = np.zeros(Regions.shape)
-        # Mask everything except region of interest
-        B[Regions == r] = 1	
-        # Calculates how values inside region vary over time
-        ts_regions_lag_i[:,idx] = np.nanmean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
-        # get sign of region
-        sign_ts_regions[idx] = np.sign(np.mean(meanbox[B==1]))
-#    print(sign_ts_regions)
-        
-    std_regions = np.std(ts_regions_lag_i, axis=0)
-    #%%
-    return ts_regions_lag_i, sign_ts_regions, std_regions
-
-
-def timeseries_for_test(ds_Sem, test, ex):
-    #%%
-    time = test['RV'].time
-    
-    array = np.zeros( (len(ex['lags']), len(time)) )
-    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time.values], 
-                          dims=['lag','time'], name='ts_predict_logit',
-                          attrs={'units':'Kelvin'})
-    ds_Sem['ts_prediction'] = ts_predic
-
-    
-    for lag in ex['lags']:
-        idx = ex['lags'].index(lag)
-        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
-                                           test['Prec'].time[0].dt.hour)
-        # select antecedant SST pattern to summer days:
-        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = find_region(test['Prec'], region=ex['regionmcK'])[0]
-    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
-    
-        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
-        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
-        
-        # add more weight based on robustness
-        
-        
-        mean = ds_Sem['pattern'].sel(lag=lag)
-        mean = np.reshape(mean.values, (mean.size))
-
-        xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
-        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
-        
-        var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
-        
-        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
-                        xrpattern_lag_i.values, regions_for_ts, 
-                        var_test_reg, mean)[:2]
-
-
-        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
-        # normalize time series (as done in the training)        
-        X_n = ts_regions_lag_i / ex['ts_train_std'][idx]
-        
-        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
-        ts_pred = logit_model_lag_i.predict(X_n)
-        ts_predic[idx] = ts_pred
-    if ex['n'] != 0:
-        # make sure time axis align, otherwise it gives nans
-        ds_Sem['ts_prediction']['time'].values = time
-    ds_Sem['ts_prediction'] = ts_predic
-#    print(ds_Sem['ts_prediction'])
-    
-    #%%
-    return ds_Sem
 
 
 #def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
@@ -1499,9 +1471,7 @@ def rand_traintest(RV_ts, Prec_reg, ex):
     #        initial_years = [yr for yr in initial_years if yr not in random_test_years]
         rand_train_years = [yr for yr in all_years if yr not in rand_test_years]
         
-    #            datesRV = pd.to_datetime(RV_ts.time.values)
-    #            matchdatesRV = to_datesmcK(datesRV, datesRV[0].hour, Prec_reg.time[0].dt.hour)
-    #            RV_dates = list(matchdatesRV.time.dt.year.values)
+
         full_years  = list(Prec_reg.time.dt.year.values)
         RV_years  = list(RV_ts.time.dt.year.values)
         
@@ -1514,8 +1484,7 @@ def rand_traintest(RV_ts, Prec_reg, ex):
         RV_test_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_test_years]
         
         
-    #            dates_train = matchdatesRV.isel(time=RV_dates_train_idx)
-        Prec_train = Prec_reg.isel(time=Prec_train_idx)
+        # This is inconveniently big to put into dictionary
         RV_train = RV_ts.isel(time=RV_train_idx)
         
     #    if len(RV_dates_test_idx) 
@@ -1539,12 +1508,13 @@ def rand_traintest(RV_ts, Prec_reg, ex):
             a_conditions_failed = True
                    
         
-        train = dict( {    'Prec'  : Prec_train,
-                           'RV'    : RV_train,
-                           'events' : event_train})
-        test = dict( {     'Prec'  : Prec_test,
-                           'RV'    : RV_test,
-                           'events' : event_test})
+        train = dict( {    'RV'             : RV_train,
+                           'events'         : event_train,
+                           'Prec_train_idx' : Prec_train_idx})
+        test = dict( {     'Prec'           : Prec_test,
+                           'RV'             : RV_test,
+                           'events'         : event_test,
+                           'Prec_test_idx'  : Prec_test_idx})
     #%%
     return train, test, test_years
 
