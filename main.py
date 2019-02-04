@@ -5,22 +5,25 @@ Created on Mon Dec 10 10:31:42 2018
 
 @author: semvijverberg
 """
+
 import os, sys
 os.chdir('/Users/semvijverberg/surfdrive/Scripts/Extracting_precursor/')
 script_dir = os.getcwd()
+sys.path.append(script_dir)
 if sys.version[:1] == '3':
     from importlib import reload as rel
-import func_mcK
-from ROC_score import ROC_score_wrapper
-from ROC_score import plotting_timeseries
 import numpy as np
 import xarray as xr 
 import pandas as pd
 import cartopy.crs as ccrs
-xrplot = func_mcK.xarray_plot
 import matplotlib.pyplot as plt
 import scipy
+import func_mcK
+from ROC_score import ROC_score_wrapper
+from ROC_score import plotting_timeseries
 xarray_plot = func_mcK.xarray_plot
+xrplot = func_mcK.xarray_plot
+
 
 base_path = "/Users/semvijverberg/surfdrive/Data_ERAint/"
 exp_folder = ''
@@ -43,16 +46,16 @@ ex = dict(
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
-     'load_mcK'     :       True,
+     'load_mcK'     :       'False',
      'RV_name'      :       'T2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
-     'method'       :       'iter', #87  
+     'method'       :       'random90', #87  
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
-     'use_ts_logit' :       False,
+     'use_ts_logit' :       True,
      'logit_valid'  :       False,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
@@ -76,15 +79,19 @@ if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
 def oneyr(datetime):
     return datetime.where(datetime.year==datetime.year[0]).dropna()
 
-if ex['load_mcK'] == True:
+if ex['load_mcK'][0] == '1':
     # Load in mckinnon Time series
-    ex['RVname'] = 'T95'
+    ex['RVname'] = 'T95' + ex['load_mcK'][1:]
     ex['name']   = 'sst_NOAA'
-    ex['startyear'] = 1982 ; ex['endyear'] = 2015
-    T95name = 'PEP-T95TimeSeries.txt'
-    RVtsfull, datesmcK = func_mcK.read_T95(T95name, ex)
+    ex['startyear'] = 1982 ; 
+    if ex['load_mcK'][1:] == 'bram':
+        T95name = 'T95_Bram_McK.csv' ; lpyr=True
+    else:
+        T95name = 'PEP-T95TimeSeries.txt'; lpyr=False
+    RVtsfull, datesmcK = func_mcK.read_T95(T95name, ex) 
+    ex['endyear'] = int(RVtsfull[-1].time.dt.year)
     datesRV = func_mcK.make_datestr(datesmcK, ex,
-                                    ex['startyear'])
+                                    ex['startyear'], ex['endyear'], lpyr=True)
     filename_precur = ('{}_1982-2017_2jan_31aug_dt-1days_{}deg'
                     '.nc'.format(ex['name'], ex['grid_res']))
 else:
@@ -98,12 +105,14 @@ else:
     xarray_plot(dicRV['RV_array']['mask'])
     RVhour   = RVtsfull.time[0].dt.hour.values
     datesRV = func_mcK.make_datestr(pd.to_datetime(RVtsfull.time.values), ex, 
-                                    ex['startyear'])
+                                    ex['startyear'], ex['endyear'])
     # add RVhour to daily dates
     datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
     filename_precur = '{}_{}-{}_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
                        ex['startyear'], ex['endyear'], ex['grid_res'])
-    ex['endyear'] = int(RVtsfull.time.dt.year[-1])
+    filename_precur = '{}_1979-2017_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+                       ex['grid_res'])
+    ex['endyear'] = int(datesRV[-1].year)
 
 # Selected Time series of T95 ex['sstartdate'] until ex['senddate']
 RVts = RVtsfull.sel(time=datesRV)
@@ -167,7 +176,7 @@ if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
 #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
 ex['plot_ts'] = True
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [5] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 95
@@ -186,19 +195,19 @@ print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear',
             'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
             'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
             'add_lsm', 'min_n_gc']
+def printset(print_ex=print_ex, ex=ex):
+    max_key_len = max([len(i) for i in print_ex])
+    for key in print_ex:
+        key_len = len(key)
+        expand = max_key_len - key_len
+        key_exp = key + ' ' * expand
+        printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+        print(printline)
 
-max_key_len = max([len(i) for i in print_ex])
-for key in print_ex:
-    key_len = len(key)
-    expand = max_key_len - key_len
-    key_exp = key + ' ' * expand
-    printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
-    print(printline)
-
-
+printset()
 #%% Run code with ex settings
 
-train_test_list, l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
+ex['train_test_list'], l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
 
 # save ex setting in text file
 folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
@@ -223,6 +232,7 @@ with open(txtfile, "w") as text_file:
         expand = max_key_len - key_len
         key_exp = key + ' ' * expand
         printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+        print(printline)
         print(printline, file=text_file)
 
       
@@ -230,7 +240,9 @@ with open(txtfile, "w") as text_file:
 
 
 #%%
-def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
+        
+
+def make_prediction(l_ds_Sem, l_ds_mcK, ex):
     
     if (
         ex['leave_n_out'] == True and ex['method'] == 'iter'
@@ -257,9 +269,9 @@ def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
                           dims=['n_tests', 'lag','latitude','longitude'], 
                           name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
 
-    for n in range(len(train_test_list)):
+    for n in range(len(ex['train_test_list'])):
         ex['n'] = n
-        train, test = train_test_list[n][0], train_test_list[n][1]
+        train, test = ex['train_test_list'][n][0], ex['train_test_list'][n][1]
         ds_Sem = l_ds_Sem[n]
         ds_mcK = l_ds_mcK[n]
         # =============================================================================
@@ -278,7 +290,7 @@ def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
         # Calculate ROC score
         # =============================================================================
         ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
-            
+        
 #        l_ds_Sem       = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
 #        l_ds_mcK       = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
 
@@ -289,6 +301,7 @@ def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
                 patterns_Sem = patterns_Sem.sel(n_tests=slice(0,ex['n_stop']))
                 patterns_mcK = patterns_mcK.sel(n_tests=slice(0,ex['n_stop']))
                 ex['n_conv'] = ex['n_stop']
+        
         
         patterns_Sem[n,:,:,:] = l_ds_Sem[n]['pattern']
         patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
@@ -303,15 +316,14 @@ def make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex):
 #%%
 
 
-ex, patterns_Sem, patterns_mcK = make_prediction(train_test_list, l_ds_Sem, l_ds_mcK, ex)
+ex, patterns_Sem, patterns_mcK = make_prediction(l_ds_Sem, l_ds_mcK, ex)
+
 
 # save output in textfile
 output_dic_folder = folder
 filename = 'output_main_dic'
 if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
-to_dict = dict( {'ex'       :   ex,
-                 'patterns_Sem'  :  patterns_Sem,
-                 'patterns_mcK'  :  patterns_mcK} )
+to_dict = dict( { 'ex'   :   ex } )
 np.save(os.path.join(output_dic_folder, filename+'.npy'), to_dict)
 
 
@@ -379,13 +391,14 @@ years = range(ex['startyear'], ex['endyear'])
 if ex['method'] == 'iter':
     test_set_to_plot = [1990, 2000, 2010, 2012, 2015]
 elif ex['method'][:6] == 'random':
-    test_set_to_plot = [set(t[1]['RV'].time.dt.year.values) for t in train_test_list[::5]]
+    test_set_to_plot = [set(t[1]['RV'].time.dt.year.values) for t in ex['train_test_list'][::5]]
+#test_set_to_plot = list(np.arange(0,ex['n_conv'],5))
 for yr in test_set_to_plot: 
     n = test_set_to_plot.index(yr)
     Robustness_weights = l_ds_Sem[n]['weights']
-
-    Robustness_weights.attrs['title'] = ('Robustness for single '
-                            'training set \n{} left out'.format(yr))
+    size_trainset = ex['n_yrs'] - ex['leave_n_years_out']
+    Robustness_weights.attrs['title'] = ('Robustness\n test yr(s): {}, single '
+                            'training set (n={} yrs)'.format(yr,size_trainset))
     Robustness_weights.attrs['units'] = 'Weights [{} ... 1]'.format(ex['comp_perc'])
     filename = os.path.join(subfolder, Robustness_weights.attrs['title'].replace(
                             ' ','_')+'.png')
@@ -415,9 +428,11 @@ func_mcK.plot_oneyr_events(RV_ts, ex, 2012, folder, saving=True)
 ## plotting same figure as in paper
 #for i in range(2005, 2010):
 #    func_mcK.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
+
 #%% Robustness accross training sets
-lats = Prec_reg.latitude
-lons = Prec_reg.longitude
+
+lats = patterns_Sem.latitude
+lons = patterns_Sem.longitude
 array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
 wgts_tests = xr.DataArray(data=array, 
                 coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
@@ -443,18 +458,24 @@ if ex['leave_n_out']:
         wghts[i] = np.sum(wgts_tests[:,i,:,:], axis=0)
     pers_patt.values = wghts
     pers_patt = pers_patt.where(pers_patt.values != 0)
+    size_trainset = ex['n_yrs'] - ex['leave_n_years_out']
     pers_patt.attrs['units'] = 'No. of times in final pattern [0 ... {}]'.format(ex['n_conv'])
-    pers_patt.attrs['title'] = ('Robustness across all '
-                            'training {} sets'.format(ex['n_conv']))
-    filename = os.path.join(ex['exp_folder'], 'counting_times_extracted_over_{}_tests'.format(ex['n_conv']) )
-    vmax = pers_patt.max().values+1E-9
+    pers_patt.attrs['title'] = ('Robustness\n{} different '
+                            'training sets (n={} yrs)'.format(ex['n_conv'],size_trainset))
+    filename = os.path.join(ex['exp_folder'], 'Robustness_across_{}_training_tests'.format(ex['n_conv']) )
+    vmax = ex['n_conv'] + 1E-9
+    mean = np.round(pers_patt.mean(dim=('latitude', 'longitude')).values, 1)
+#    mean = pers_patt.quantile(0.80, dim=('latitude','longitude')).values
+    std =  np.round(pers_patt.std(dim=('latitude', 'longitude')).values, 0)
+    ax_text = ['mean = {}±{}'.format(mean[l],int(std[l])) for l in range(len(ex['lags']))]
     kwrgs = dict( {'title' : pers_patt.attrs['title'], 'clevels' : 'notdefault', 
-                   'steps' : 11, 'subtitles': ROC_str_Sem, 
-                   'vmin' : max(0,vmax-20), 'vmax' : vmax, 
-                   'cmap' : plt.cm.hot_r, 'column' : 2, 'extend':['min','yellow'],
+                   'steps' : 16, 'subtitles': ROC_str_Sem, 
+                   'vmin' : 0, 'vmax' : vmax, 'clim' : (max(0,vmax-20), vmax),
+                   'cmap' : plt.cm.magma_r, 'column' : 2, 'extend':['min','yellow'],
                    'cbar_vert' : 0.05, 'cbar_hght' : 0.01,
                    'adj_fig_h' : 1.25, 'adj_fig_w' : 1., 
-                   'hspace' : 0.02, 'wspace' : 0.08} )
+                   'hspace' : 0.02, 'wspace' : 0.08 ,
+                   'ax_text': ax_text } )
     func_mcK.plotting_wrapper(pers_patt, filename, ex, kwrgs=kwrgs)
 #%% Weighing features if there are extracted every run (training set)
 # weighted by persistence of pattern over
@@ -487,8 +508,11 @@ if ex['leave_n_out']:
 
 
 #%% Plotting prediciton time series vs truth:
-test = train_test_list[0][1]        
-plotting_timeseries(test, ex) 
+yrs_to_plot = [1985, 1990, 1995, 2004, 2007, 2012, 2015]
+#yrs_to_plot = list(np.arange(ex['startyear'],ex['endyear']+1))
+test = ex['train_test_list'][0][1]        
+plotting_timeseries(test, yrs_to_plot, ex) 
+
 
 #%% Initial regions from only composite extraction:
 
@@ -546,25 +570,46 @@ if ex['leave_n_out']:
 
 
 #%% Load data
-answer = input("You sure you want to load data, y or n?")
+answer = input("You sure you want to load data, y or n?\n")
 if answer == 'y':
     import numpy as np
     import os
     import xarray as xr
-    output_dic_folder = ('/Users/semvijverberg/surfdrive/McKinRepl/T2mmax_sst_Northern_PEPrectangle/random_leave_6_out_1979_2017_tf1_[5, 15, 30, 50]nyr_60')
+    import matplotlib.pyplot as plt
+    output_dic_folder = ('/Users/semvijverberg/surfdrive/MckinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[5, 15, 30, 50]_mcKthresp_2.5deg_60nyr_0.05False_tsFalse_95tperc_0.8tc_1_2019-02-01')
+
     
     #
     filename = 'output_main_dic'
     #
     dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
     ex = dic['ex']
-    patterns_Sem = dic['patterns_Sem']
-    patterns_mcK = dic['patterns_mcK']
+    if 'patterns_Sem' in dic.keys():
+        patterns_Sem = dic['patterns_Sem']
+        patterns_mcK = dic['patterns_mcK']
     if 'startperiod' not in ex.keys():
         ex['startperiod'] = ex['sstartdate'][-5:]
         ex['endperiod'] = ex['senddate'][-5:]
 
+print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear', 
+            'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
+            'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
+            'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
+            'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
+            'pval_logit_first', 'pval_logit_final', 'rollingmean',
+            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
+            'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
+            'add_lsm', 'min_n_gc']
+def printset(print_ex=print_ex, ex=ex):
+    max_key_len = max([len(i) for i in print_ex])
+    for key in print_ex:
+        key_len = len(key)
+        expand = max_key_len - key_len
+        key_exp = key + ' ' * expand
+        printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+        print(printline)
 
+printset()
 #%%
     
     

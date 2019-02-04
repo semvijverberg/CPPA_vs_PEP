@@ -13,11 +13,12 @@ from netCDF4 import num2date
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import matplotlib.colors as colors
+import matplotlib as mpl
 from shapely.geometry.polygon import LinearRing
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import matplotlib.ticker as mticker
 import cartopy.mpl.ticker as cticker
-import datetime
+import datetime, calendar
 import scipy 
 flatten = lambda l: [item for sublist in l for item in sublist]
 
@@ -314,8 +315,10 @@ def extract_precursor(train, test, ex):
         pattern_p2[idx] = composite_p2
         
         pattern_num_init[idx] = xrnpmap_p1
+        
         if type(xrnpmap_p2) == type(None):
             pattern_num[idx] = xrnpmap_p1
+#            pattern_num[idx].coords['mask'] = xrnpmap_p1.mask
         else:
             pattern_num[idx] = xrnpmap_p2 
         
@@ -479,7 +482,6 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
         return chunks, count
 
     all_yrs_set = list(set(ts_3d.time.dt.year.values))    
-    all_yrs_set = all_yrs_set
     ex['n_ch1'] = 1
     chunks = [all_yrs_set[i:(i+ex['n_ch1'])] for i in range(int(len(all_yrs_set)))]
     years_n_out = [2, 3, 4, 5]
@@ -524,7 +526,7 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
 #    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.sum(reg_all_1, axis=0), (lats.size, lons.size))) ; plt.colorbar()
     mask_final = ( np.sum(reg_all_1, axis=0) < int(ex['comp_perc'] * len(chunks)))
 #    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.array(mask_final,dtype=int), (lats.size, lons.size))) 
-    #%%
+#    %%
     weights = np.sum(reg_all_1, axis=0)
     weights[mask_final==True] = 0.
 #    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(weights, (lats.size, lons.size)))
@@ -584,6 +586,134 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     #%%
     return composite_p1, xrnpmap_init, list_region_info, bin_event_trainwghts
 
+
+def logit_fit2(ds_Sem, Prec_reg, train, ex):
+#%%
+    lats = train['Prec'].latitude
+    lons = train['Prec'].longitude
+    
+    array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
+    pattern_p2 = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+                          dims=['lag','latitude','longitude'], name='communities_composite',
+                          attrs={'units':'Kelvin'})
+    
+
+
+    array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
+    pattern_num = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+                          dims=['lag','latitude','longitude'], name='commun_numb_init', 
+                          attrs={'units':'Precursor regions'})
+    pattern_num.name = 'commun_numbered'
+    
+
+    logit_model = []
+    
+    ex['ts_train_std'] = []
+    
+    combs_reg_kept = np.zeros( len(ex['lags']), dtype=list) 
+    
+    Actors_ts_GPH = [[] for i in ex['lags']] #!
+    
+    x = 0
+    for lag in ex['lags']:
+#            i = ex['lags'].index(lag)
+        idx = ex['lags'].index(lag)
+        event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
+        event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
+                                           train['Prec'].time[0].dt.hour)
+        events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
+        dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
+                                           train['Prec'].time[0].dt.hour)
+        dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
+        ### exlude leap days ###
+        # no leap days in dates_train_min_lag
+        noleapdays = ((dates_train_min_lag.dt.month == 2) & (dates_train_min_lag.dt.day == 29))==False
+        # only keep noleapdays
+        dates_train_min_lag = dates_train_min_lag[noleapdays].dropna(dim='time', how='all')
+        # also kick out the corresponding events
+        dates_train = dates_train[noleapdays].dropna(dim='time', how='all')
+       # no leap days in events_min_lag
+        noleapdays = ((events_min_lag.dt.month == 2) & (events_min_lag.dt.day == 29))==False
+        # only keep noleapdays
+        events_min_lag = events_min_lag[noleapdays].dropna(dim='time', how='all') 
+        # also kick out the corresponding events
+        event_train = event_train[noleapdays].dropna(dim='time', how='all')   
+        event_idx = [list(dates_train.values).index(E) for E in event_train.values]
+        binary_events = np.zeros(dates_train.size)    
+        binary_events[event_idx] = 1
+        
+        
+
+        np.warnings.filterwarnings('ignore')
+        mask = ds_Sem['pattern_num_init'].sel(lag=lag).values >= 1
+        # normal mean of extracted regions
+        composite_p1 = ds_Sem['pattern'].sel(lag=lag).where(mask==True)
+        # actor/precursor full 3d timeseries at RV period minus lag
+        ts_3d = train['Prec'].sel(time=dates_train_min_lag)
+        ts_3d_n = ts_3d/ts_3d.std(dim='time')
+        ts_3d_nw = ts_3d_n * ds_Sem['weights'].sel(lag=lag)
+        mean_n = composite_p1/ts_3d.std(dim='time')
+        regions_for_ts = np.arange(ds_Sem['pattern_num_init'].min(), ds_Sem['pattern_num_init'].max())
+        Regions_lag_i = ds_Sem['pattern_num_init'].squeeze().values
+        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
+                                regions_for_ts, ts_3d_nw, mean_n)[:2]
+                                         
+
+        
+        if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
+            lat_grid = composite_p1.latitude.values
+            lon_grid = composite_p1.longitude.values
+            
+            
+            # get wgths and only regions that contributed to probability    
+            if ex['new_model_sel'] == False:
+                odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
+                        ts_regions_lag_i, sign_ts_regions, binary_events, ex)
+        
+            if ex['new_model_sel'] == True:
+                odds, regions_kept, combs_kept, logitmodel = NEW_train_weights_LogReg(
+                        ts_regions_lag_i, sign_ts_regions, binary_events, ex)
+                
+            upd_regions = np.zeros(Regions_lag_i.shape)
+            for i in range(len(regions_kept)):
+                reg = regions_kept[i]
+                upd_regions[Regions_lag_i == reg] =  i+1
+        
+            # create map of precursor regions
+            npmap = np.ma.reshape(upd_regions, (len(lat_grid), len(lon_grid)))
+            mask_strongest = (npmap!=0) 
+            npmap[mask_strongest==False] = 0
+            xrnpmap = composite_p1.copy()
+            xrnpmap.values = npmap
+            
+            # update the mask for the composite mean
+            mask = (('latitude', 'longitude'), mask_strongest)
+            composite_p1.coords['mask'] = mask
+            xrnpmap.coords['mask'] = mask
+            xrnpmap = xrnpmap.where(xrnpmap.mask==True)
+            norm_mean = composite_p1.where(xrnpmap.mask==True)
+            
+        #    plt.figure()
+        #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
+            
+        if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
+            xrnpmap = None
+            combs_kept = None
+            logitmodel = None
+            ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
+            
+        
+        pattern_p2[idx] = norm_mean * ds_Sem['weights'].sel(lag=lag) 
+        pattern_num[idx] = xrnpmap
+        logit_model.append(logitmodel)
+    ds_Sem['pattern_p1'] = pattern_p2
+    ds_Sem['pattern_num'] = pattern_num
+    ds_Sem['logitmodel'] = logitmodel
+        
+#    plt.figure() 
+#    weighted_mean.plot.contourf()
+    #%%
+    return pattern_p2, pattern_num, logitmodel #weighted_mean, xrwghts_comp, xrnpmap, combs_kept, logitmodel
 
 
 def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
@@ -936,9 +1066,12 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
     # std regions
     std_regions     = np.zeros( (len(regions_for_ts)) )
     
-    if len(Regions_lag_i.shape) == 1.:
+    # composite needed for sign
+    meanbox = np.reshape(mean.values, (lat_grid.size*lon_grid.size))
+    
+    if Regions_lag_i.shape == actbox[0].shape:
         Regions = Regions_lag_i
-    elif len(Regions_lag_i.shape) == 2.:
+    elif Regions_lag_i.shape == (lat_grid.shape[0], lon_grid.shape[0]):
         Regions = np.reshape(Regions_lag_i, (Regions_lag_i.size))
     # calculate area-weighted mean over features
     for r in regions_for_ts:
@@ -948,9 +1081,9 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, mean):
         # Mask everything except region of interest
         B[Regions == r] = 1	
         # Calculates how values inside region vary over time
-        ts_regions_lag_i[:,idx] = np.mean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
+        ts_regions_lag_i[:,idx] = np.nanmean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
         # get sign of region
-        sign_ts_regions[idx] = np.sign(np.mean(mean[B==1]))
+        sign_ts_regions[idx] = np.sign(np.mean(meanbox[B==1]))
 #    print(sign_ts_regions)
         
     std_regions = np.std(ts_regions_lag_i, axis=0)
@@ -1014,250 +1147,250 @@ def timeseries_for_test(ds_Sem, test, ex):
     return ds_Sem
 
 
-def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
-    #%%
-#    from sklearn.linear_model import LogisticRegression
-#    from sklearn.model_selection import train_test_split
-    import statsmodels.api as sm
-    import itertools
-    n_feat = len(ts_regions_lag_i[0])
-    n_samples = len(ts_regions_lag_i[:,0])
-
-    regions          = np.arange(1, n_feat + 1)   
-    track_super_sign = np.arange(1, n_feat + 1)   
-    track_r_kept     = np.arange(1, n_feat + 1)
-    signs = sign_ts_regions
-    
-    assert n_feat != 0, 'no features found'
-
-    all_comb = list(itertools.product([0, 1], repeat=n_feat))[1:]
-    combs = [i for i in all_comb if (np.sum(i) == 2) or np.sum(i) == 1]
-    
-    
-    X_n = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0) #!!!
-    X_n = X_n[:,:] * sign_ts_regions[None,:]
-    y_train = binary_events
-    
-    
-    X = np.zeros( (n_samples, len(combs)) )
-    for c in combs:
-        idx = combs.index(c)
-        ind_r = np.where(np.array(c) == 1)[0]
-        X[:,idx] = np.product(X_n[:,ind_r], axis=1)
-     
-# =============================================================================
-#    # Forward selection
-# =============================================================================
-    # First parameter
-    combs_kept = []
-    final_bics = [9E8]
-    bic = []
-    # first comb that add likelihood
-    first_par_decr = True
-    while first_par_decr:
-        odds_list  = []
-        for m in range(X.shape[1]):
-            logit_model = sm.Logit(y_train,X[:,m])
-            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-            bic.append(result.bic)
-            odds_list.append( np.exp(result.params) )
-        min_bic = np.argmin(bic)
-#        min_bic = np.argmax(odds_list)
-        # if first par does not decrease the likelihood, then I keep it
-        # otherwise, I am just picking a random area from my regions, that has 
-        # likely nothing to do with the event
-        logit_model = sm.Logit(y_train,X[:,min_bic])
-        
-        
-        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-#        if np.exp(result.params) > 1.0:
-        X_for = X[:,min_bic,None]
-        combs_kept.append(combs[min_bic])
-        val_bic = bic[min_bic]
-        X = np.delete(X, min_bic, axis=1)
-        first_par_decr = False
-#        else:
-#            # Delete from combs
-#            X = np.delete(X, min_bic, axis=1)
-        
-    # incrementally add parameters
-    final_bics.append(val_bic)
-    diff = []
-    forward_not_converged = True
-      
-    while forward_not_converged:
-        # calculate bic when adding an extra parameter
-        pd_res = pd.DataFrame(columns=['bic', 'odds'])
-        bic = []
-        odds_list = []
-        for m in range(X.shape[1]):
-            X_ = np.concatenate( (X_for, X[:,m,None]), axis=1)
-            logit_model = sm.Logit( y_train, X_ )
-            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-            odds_added = np.exp(result.params[-1]) 
-            pd_res = pd_res.append( {'bic':result.bic, 'odds':odds_added} , ignore_index=True )
-        
-#        sorted_odds = pd_res.sort_values(by=['odds'], ascending=False)
-#        # take top 25 % of odds
-#        idx = max(1, int(np.percentile(range(X.shape[1]), 30)) )
-#        min_bic = sorted_odds[:idx]['bic'].idxmin()
-    
-        # just take param with min_bic
-        min_bic = pd_res['bic'].idxmin()
-        
-        val_bic = pd_res.iloc[min_bic]['bic']
-#        print(val_bic)
-        final_bics.append(val_bic)
-            # relative difference vs. initial bic
-        diff_m = (final_bics[-1] - final_bics[-2])/final_bics[1] 
-        threshold_bic = 1E-4 # used to be -1%, i.e. 0.01
-#        if diff_m < threshold_bic and np.exp(result.params[-1]) > 1.:
-        threshold_bic = -0.01
-        if diff_m < threshold_bic:
-            # add parameter to model only if they substantially decreased bic
-            X_for = np.concatenate( (X_for, X[:,min_bic,None] ), axis=1)
-            combs_kept.append(combs[min_bic])
-        # delete parameter from list
-        X = np.delete(X, min_bic, axis=1)
-        #reloop, is new bic value really lower then the old one?
-        diff.append( (final_bics[-1] - final_bics[-2])/final_bics[1] )
-        # terminate if condition is not met 4 times in a row
-        test_n_extra = 5
-        if len(diff) > test_n_extra:
-            # difference of last 5 attempts
-            # Decrease in bic should be bigger than 1% of the initial bic value (only first par)
-            diffs = [i for i in diff[-test_n_extra:] if i > threshold_bic]
-            
-            if len(diffs) == test_n_extra:
-                forward_not_converged = False
-        # if all attempts are made, then do not delete the last variable from X
-        if X.shape[1] == 1:
-            forward_not_converged = False
-
-        
-    final_forward = sm.Logit( y_train, X_for )
-    result = final_forward.fit(disp=0, method='newton', tol=1E-8, retall=True)
-#    print(result.summary2())
-            
-    
-    
-#    plt.plot(diff[1:])
-   #%%
-# =============================================================================
-#   # Backward selection
-# =============================================================================
-    backward_not_converged = True
-    while backward_not_converged and X_for.shape[1] > 1:
-        bicb = []
-        for d in range(X_for.shape[1]):
-            X_one_d = np.delete(X_for, d, axis=1)
-            logit_model = sm.Logit( y_train, X_one_d )
-            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-            bicb.append(result.bic)
-        min_bicb = np.argmin(bicb)
-        val_bicb = bicb[min_bicb]
-        diff = (val_bicb - val_bic) / val_bic
-        # even if val_bicb is not lower, but within 1% of larger model,
-        # then the model with df-1 is kept.
-        if abs(diff) < threshold_bic:
-            X_for = np.delete(X_for, min_bicb, axis=1)
-            combs_kept = [c for c in combs_kept if combs_kept.index(c) != min_bicb]
-        else:
-            backward_not_converged = False
-   
-         
-# =============================================================================
-#   # Final model
-# =============================================================================
-    final_model = sm.Logit( y_train, X_for )
-    result = final_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-    odds = np.exp(result.params)
-    
-    # quantify strength of each region
-    region_str = np.array(combs_kept, dtype=float)
-    for c in combs_kept:
-        idx = combs_kept.index(c)
-        ind_r = np.where(np.array(c) == 1)[0]
-        region_str[idx][ind_r] = float(odds[idx])
-        
-    pd_str = pd.DataFrame(columns=['B_coeff'], index= track_r_kept)
-    for i in range(len(np.swapaxes(region_str, 1,0))):
-        reg_c = np.swapaxes(region_str, 1,0)[i]
-        idx_r = np.where(reg_c != 0)[0]
-        if len(idx_r) == 0:
-            pass
-        else:
-            pd_str.loc[i+1, 'B_coeff'] = np.product( reg_c[idx_r] )
-    pd_str = pd_str.dropna()
-    
-    
-    B_coeff = pd_str['B_coeff'].values.squeeze().flatten()
-    
-    track_r_kept = pd_str['B_coeff'].index.values
-    final_model = result
-    # update combs_kept, region numbers are changed further up to 1,2,3, etc..
-    del_zeros = np.sum(combs_kept,axis=0) >= 1
-    combs_kept_new = [tuple(np.array(c)[del_zeros]) for c in combs_kept ]
-    # store std of regions that were kept
-    
-    #%%
-    return B_coeff, track_r_kept, combs_kept_new, final_model
-
-
-
-def NEW_timeseries_for_test(ds_Sem, test, ex):
-    #%%
-    time = test['RV'].time
-    
-    array = np.zeros( (len(ex['lags']), len(time)) )
-    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time], 
-                          dims=['lag','time'], name='ts_predict_logit',
-                          attrs={'units':'Kelvin'})
-    
-    for lag in ex['lags']:
-        idx = ex['lags'].index(lag)
-        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
-                                           test['Prec'].time[0].dt.hour)
-        # select antecedant SST pattern to summer days:
-        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-#        var_test_mcK = find_region(test['Prec'], region=ex['regionmcK'])[0]
-#    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+#def NEW_train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
+#    #%%
+##    from sklearn.linear_model import LogisticRegression
+##    from sklearn.model_selection import train_test_split
+#    import statsmodels.api as sm
+#    import itertools
+#    n_feat = len(ts_regions_lag_i[0])
+#    n_samples = len(ts_regions_lag_i[:,0])
+#
+#    regions          = np.arange(1, n_feat + 1)   
+#    track_super_sign = np.arange(1, n_feat + 1)   
+#    track_r_kept     = np.arange(1, n_feat + 1)
+#    signs = sign_ts_regions
 #    
-#        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
-        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
-        mean = ds_Sem['pattern'].sel(lag=lag)
-        mean = np.reshape(mean.values, (mean.size))
-
-        xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
-        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
-        
-        ts_3d_w = var_test_reg * ds_Sem['weights'].sel(lag=lag)
-        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
-                        xrpattern_lag_i.values, regions_for_ts, 
-                        ts_3d_w, mean)[:2]
-        # make all ts positive
-        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
-        # normalize time series (as done in the training)        
-        X_n = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
-        
-        combs_kept_lag_i  = ds_Sem['combs_kept'].values[idx] 
-        ts_new = np.zeros( (time.size, len(combs_kept_lag_i)) )
-        for c in combs_kept_lag_i:
-            i = combs_kept_lag_i.index(c)
-            idx_r = np.where(np.array(c) == 1)[0]
-#            idx_r = ind_r - 1
-            ts_new[:,i] = np.product(X_n[:,idx_r], axis=1)
-        
-
-        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
-        
-        ts_pred = logit_model_lag_i.predict(ts_new)
-#        ts_prediction = (ts_pred-np.mean(ts_pred))/ np.std(ts_pred)
-        ts_predic[idx] = ts_pred
-    
-    ds_Sem['ts_prediction'] = ts_predic
-    #%%
-    return ds_Sem
+#    assert n_feat != 0, 'no features found'
+#
+#    all_comb = list(itertools.product([0, 1], repeat=n_feat))[1:]
+#    combs = [i for i in all_comb if (np.sum(i) == 2) or np.sum(i) == 1]
+#    
+#    
+#    X_n = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0) #!!!
+#    X_n = X_n[:,:] * sign_ts_regions[None,:]
+#    y_train = binary_events
+#    
+#    
+#    X = np.zeros( (n_samples, len(combs)) )
+#    for c in combs:
+#        idx = combs.index(c)
+#        ind_r = np.where(np.array(c) == 1)[0]
+#        X[:,idx] = np.product(X_n[:,ind_r], axis=1)
+#     
+## =============================================================================
+##    # Forward selection
+## =============================================================================
+#    # First parameter
+#    combs_kept = []
+#    final_bics = [9E8]
+#    bic = []
+#    # first comb that add likelihood
+#    first_par_decr = True
+#    while first_par_decr:
+#        odds_list  = []
+#        for m in range(X.shape[1]):
+#            logit_model = sm.Logit(y_train,X[:,m])
+#            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+#            bic.append(result.bic)
+#            odds_list.append( np.exp(result.params) )
+#        min_bic = np.argmin(bic)
+##        min_bic = np.argmax(odds_list)
+#        # if first par does not decrease the likelihood, then I keep it
+#        # otherwise, I am just picking a random area from my regions, that has 
+#        # likely nothing to do with the event
+#        logit_model = sm.Logit(y_train,X[:,min_bic])
+#        
+#        
+#        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+##        if np.exp(result.params) > 1.0:
+#        X_for = X[:,min_bic,None]
+#        combs_kept.append(combs[min_bic])
+#        val_bic = bic[min_bic]
+#        X = np.delete(X, min_bic, axis=1)
+#        first_par_decr = False
+##        else:
+##            # Delete from combs
+##            X = np.delete(X, min_bic, axis=1)
+#        
+#    # incrementally add parameters
+#    final_bics.append(val_bic)
+#    diff = []
+#    forward_not_converged = True
+#      
+#    while forward_not_converged:
+#        # calculate bic when adding an extra parameter
+#        pd_res = pd.DataFrame(columns=['bic', 'odds'])
+#        bic = []
+#        odds_list = []
+#        for m in range(X.shape[1]):
+#            X_ = np.concatenate( (X_for, X[:,m,None]), axis=1)
+#            logit_model = sm.Logit( y_train, X_ )
+#            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+#            odds_added = np.exp(result.params[-1]) 
+#            pd_res = pd_res.append( {'bic':result.bic, 'odds':odds_added} , ignore_index=True )
+#        
+##        sorted_odds = pd_res.sort_values(by=['odds'], ascending=False)
+##        # take top 25 % of odds
+##        idx = max(1, int(np.percentile(range(X.shape[1]), 30)) )
+##        min_bic = sorted_odds[:idx]['bic'].idxmin()
+#    
+#        # just take param with min_bic
+#        min_bic = pd_res['bic'].idxmin()
+#        
+#        val_bic = pd_res.iloc[min_bic]['bic']
+##        print(val_bic)
+#        final_bics.append(val_bic)
+#            # relative difference vs. initial bic
+#        diff_m = (final_bics[-1] - final_bics[-2])/final_bics[1] 
+#        threshold_bic = 1E-4 # used to be -1%, i.e. 0.01
+##        if diff_m < threshold_bic and np.exp(result.params[-1]) > 1.:
+#        threshold_bic = -0.01
+#        if diff_m < threshold_bic:
+#            # add parameter to model only if they substantially decreased bic
+#            X_for = np.concatenate( (X_for, X[:,min_bic,None] ), axis=1)
+#            combs_kept.append(combs[min_bic])
+#        # delete parameter from list
+#        X = np.delete(X, min_bic, axis=1)
+#        #reloop, is new bic value really lower then the old one?
+#        diff.append( (final_bics[-1] - final_bics[-2])/final_bics[1] )
+#        # terminate if condition is not met 4 times in a row
+#        test_n_extra = 5
+#        if len(diff) > test_n_extra:
+#            # difference of last 5 attempts
+#            # Decrease in bic should be bigger than 1% of the initial bic value (only first par)
+#            diffs = [i for i in diff[-test_n_extra:] if i > threshold_bic]
+#            
+#            if len(diffs) == test_n_extra:
+#                forward_not_converged = False
+#        # if all attempts are made, then do not delete the last variable from X
+#        if X.shape[1] == 1:
+#            forward_not_converged = False
+#
+#        
+#    final_forward = sm.Logit( y_train, X_for )
+#    result = final_forward.fit(disp=0, method='newton', tol=1E-8, retall=True)
+##    print(result.summary2())
+#            
+#    
+#    
+##    plt.plot(diff[1:])
+#   #%%
+## =============================================================================
+##   # Backward selection
+## =============================================================================
+#    backward_not_converged = True
+#    while backward_not_converged and X_for.shape[1] > 1:
+#        bicb = []
+#        for d in range(X_for.shape[1]):
+#            X_one_d = np.delete(X_for, d, axis=1)
+#            logit_model = sm.Logit( y_train, X_one_d )
+#            result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+#            bicb.append(result.bic)
+#        min_bicb = np.argmin(bicb)
+#        val_bicb = bicb[min_bicb]
+#        diff = (val_bicb - val_bic) / val_bic
+#        # even if val_bicb is not lower, but within 1% of larger model,
+#        # then the model with df-1 is kept.
+#        if abs(diff) < threshold_bic:
+#            X_for = np.delete(X_for, min_bicb, axis=1)
+#            combs_kept = [c for c in combs_kept if combs_kept.index(c) != min_bicb]
+#        else:
+#            backward_not_converged = False
+#   
+#         
+## =============================================================================
+##   # Final model
+## =============================================================================
+#    final_model = sm.Logit( y_train, X_for )
+#    result = final_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
+#    odds = np.exp(result.params)
+#    
+#    # quantify strength of each region
+#    region_str = np.array(combs_kept, dtype=float)
+#    for c in combs_kept:
+#        idx = combs_kept.index(c)
+#        ind_r = np.where(np.array(c) == 1)[0]
+#        region_str[idx][ind_r] = float(odds[idx])
+#        
+#    pd_str = pd.DataFrame(columns=['B_coeff'], index= track_r_kept)
+#    for i in range(len(np.swapaxes(region_str, 1,0))):
+#        reg_c = np.swapaxes(region_str, 1,0)[i]
+#        idx_r = np.where(reg_c != 0)[0]
+#        if len(idx_r) == 0:
+#            pass
+#        else:
+#            pd_str.loc[i+1, 'B_coeff'] = np.product( reg_c[idx_r] )
+#    pd_str = pd_str.dropna()
+#    
+#    
+#    B_coeff = pd_str['B_coeff'].values.squeeze().flatten()
+#    
+#    track_r_kept = pd_str['B_coeff'].index.values
+#    final_model = result
+#    # update combs_kept, region numbers are changed further up to 1,2,3, etc..
+#    del_zeros = np.sum(combs_kept,axis=0) >= 1
+#    combs_kept_new = [tuple(np.array(c)[del_zeros]) for c in combs_kept ]
+#    # store std of regions that were kept
+#    
+#    #%%
+#    return B_coeff, track_r_kept, combs_kept_new, final_model
+#
+#
+#
+#def NEW_timeseries_for_test(ds_Sem, test, ex):
+#    #%%
+#    time = test['RV'].time
+#    
+#    array = np.zeros( (len(ex['lags']), len(time)) )
+#    ts_predic = xr.DataArray(data=array, coords=[ex['lags'], time], 
+#                          dims=['lag','time'], name='ts_predict_logit',
+#                          attrs={'units':'Kelvin'})
+#    
+#    for lag in ex['lags']:
+#        idx = ex['lags'].index(lag)
+#        dates_test = to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+#                                           test['Prec'].time[0].dt.hour)
+#        # select antecedant SST pattern to summer days:
+#        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
+##        var_test_mcK = find_region(test['Prec'], region=ex['regionmcK'])[0]
+##    #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
+##    
+##        var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
+#        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
+#        mean = ds_Sem['pattern'].sel(lag=lag)
+#        mean = np.reshape(mean.values, (mean.size))
+#
+#        xrpattern_lag_i = ds_Sem['pattern_num'].sel(lag=lag)
+#        regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
+#        
+#        ts_3d_w = var_test_reg * ds_Sem['weights'].sel(lag=lag)
+#        ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
+#                        xrpattern_lag_i.values, regions_for_ts, 
+#                        ts_3d_w, mean)[:2]
+#        # make all ts positive
+#        ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
+#        # normalize time series (as done in the training)        
+#        X_n = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0)
+#        
+#        combs_kept_lag_i  = ds_Sem['combs_kept'].values[idx] 
+#        ts_new = np.zeros( (time.size, len(combs_kept_lag_i)) )
+#        for c in combs_kept_lag_i:
+#            i = combs_kept_lag_i.index(c)
+#            idx_r = np.where(np.array(c) == 1)[0]
+##            idx_r = ind_r - 1
+#            ts_new[:,i] = np.product(X_n[:,idx_r], axis=1)
+#        
+#
+#        logit_model_lag_i = ds_Sem['logitmodel'].values[idx]
+#        
+#        ts_pred = logit_model_lag_i.predict(ts_new)
+##        ts_prediction = (ts_pred-np.mean(ts_pred))/ np.std(ts_pred)
+#        ts_predic[idx] = ts_pred
+#    
+#    ds_Sem['ts_prediction'] = ts_predic
+#    #%%
+#    return ds_Sem
 
 
 
@@ -1680,17 +1813,28 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
 
 def read_T95(T95name, ex):
     filepath = os.path.join(ex['path_pp'], T95name)
-    data = pd.read_csv(filepath)
-    datelist = []
-    values = []
-    for r in data.values:
-        year = int(r[0][:4])
-        month = int(r[0][5:7])
-        day = int(r[0][7:11])
-        string = '{}-{}-{}'.format(year, month, day)
-        values.append(float(r[0][10:]))
-        datelist.append( pd.Timestamp(string) )
-    
+    if filepath[-3:] == 'txt':
+        data = pd.read_csv(filepath)
+        datelist = []
+        values = []
+        for r in data.values:
+            year = int(r[0][:4])
+            month = int(r[0][5:7])
+            day = int(r[0][7:11])
+            string = '{}-{}-{}'.format(year, month, day)
+            values.append(float(r[0][10:]))
+            datelist.append( pd.Timestamp(string) )
+    elif filepath[-3:] == 'csv':
+        data = pd.read_csv(filepath, sep='\t')
+        datelist = []
+        values = []
+        for r in data.iterrows():
+            year = int(r[1]['Year'])
+            month = int(r[1]['Month'])
+            day =   int(r[1]['Day'])
+            string = '{}-{}-{}T00:00:00'.format(year, month, day)
+            values.append(float(r[1]['T95(degC)']))
+            datelist.append( pd.Timestamp(string) )
     dates = pd.to_datetime(datelist)
     RVts = xr.DataArray(values, coords=[dates], dims=['time'])
     return RVts, dates
@@ -1832,32 +1976,40 @@ def expand_times_for_lags(datetime, ex):
     
     return pd.to_datetime(expanded_time)
 
-def make_datestr(dates, ex, startyr):
+def make_datestr(dates, ex, startyr, endyr, lpyr=False):
     
     sstartdate = str(startyr) + '-' + ex['startperiod']
     senddate   = str(startyr) + '-' + ex['endperiod']
     
     start_yr = pd.DatetimeIndex(start=sstartdate, end=senddate, 
                                 freq=(dates[1] - dates[0]))
-    breakyr = dates.year.max()
+    if lpyr==True and calendar.isleap(startyr):
+        start_yr -= pd.Timedelta( '1 days')
+    else:
+        pass
+    breakyr = endyr
     datesstr = [str(date).split('.', 1)[0] for date in start_yr.values]
-    nyears = (dates.year[-1] - dates.year[0])+1
+    nyears = (endyr - startyr)+1
     startday = start_yr[0].strftime('%Y-%m-%dT%H:%M:%S')
     endday = start_yr[-1].strftime('%Y-%m-%dT%H:%M:%S')
     firstyear = startday[:4]
     def plusyearnoleap(curr_yr, startday, endday, incr):
         startday = startday.replace(firstyear, str(curr_yr+incr))
         endday = endday.replace(firstyear, str(curr_yr+incr))
+        
         next_yr = pd.DatetimeIndex(start=startday, end=endday, 
                         freq=(dates[1] - dates[0]))
-        # excluding leap year again
-        noleapdays = (((next_yr.month==2) & (next_yr.day==29))==False)
-        next_yr = next_yr[noleapdays].dropna(how='all')
+        if lpyr==True and calendar.isleap(curr_yr+incr):
+            next_yr -= pd.Timedelta( '1 days')
+        elif lpyr == False:
+            # excluding leap year again
+            noleapdays = (((next_yr.month==2) & (next_yr.day==29))==False)
+            next_yr = next_yr[noleapdays].dropna(how='all')
         return next_yr
     
 
-    for yr in range(0,nyears-1):
-        curr_yr = yr+dates.year[0]
+    for yr in range(0,nyears):
+        curr_yr = yr+startyr
         next_yr = plusyearnoleap(curr_yr, startday, endday, 1)
         nextstr = [str(date).split('.', 1)[0] for date in next_yr.values]
         datesstr = datesstr + nextstr
@@ -2285,10 +2437,10 @@ def plot_oneyr_events(xarray, ex, test_year, folder, saving=False):
     plt.axhline(y=threshold, color='blue', linewidth=2 )
     plt.fill_between(plotpaper.time.values, threshold, plotpaper, where=(plotpaper.values > threshold),
                  interpolate=True, color="crimson", label="ERA-I hot days")
-    if ex['load_mcK'] == False:
+    if ex['load_mcK'][0] != '1':
         T95name = 'PEP-T95TimeSeries.txt'
         T95, datesmcK = read_T95(T95name, ex)
-        datesRV_mcK = make_datestr(datesmcK, ex, 1982)
+        datesRV_mcK = make_datestr(datesmcK, ex, 1982, 2015)
         T95RV = T95.sel(time=datesRV_mcK)
         if ex['mcKthres'] == 'mcKthres':
             # binary time serie when T95 exceeds 1 std
@@ -2366,7 +2518,10 @@ def finalfigure(xrdata, file_name, kwrgs):
     else:
         vmin=kwrgs['vmin']
         vmax=kwrgs['vmax']
+        
         clevels = np.linspace(vmin,vmax,kwrgs['steps'])
+#        if kwrgs['extend'][0] == 'min':
+#            clevels[0] = 0.
     cmap = kwrgs['cmap']
     
     n_plots = xrdata[var].size
@@ -2394,6 +2549,13 @@ def finalfigure(xrdata, file_name, kwrgs):
         ring = LinearRing(list(zip(lons_sq , lats_sq )))
         ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green',
                           linewidth=3.5)
+        
+        if 'ax_text' in kwrgs.keys():
+            ax.text(0.0, 1.01, kwrgs['ax_text'][n_ax],
+            verticalalignment='bottom', horizontalalignment='left',
+            transform=ax.transAxes,
+            color='black', fontsize=15)
+            
         if map_proj.proj4_params['proj'] in ['merc', 'eqc']:
 #            print(True)
             ax.set_xticks(longitude_labels[:-1], crs=ccrs.PlateCarree())
@@ -2409,11 +2571,13 @@ def finalfigure(xrdata, file_name, kwrgs):
             ax.set_xlabel('')
             ax.set_ylabel('')
             
+            
         else:
             pass
         
-    g.fig.text(0.5, 0.93, kwrgs['title'], fontsize=20,
-               fontweight='heavy', horizontalalignment='center')
+    g.fig.text(0.5, 0.99, kwrgs['title'], fontsize=20,
+               fontweight='heavy', transform=g.fig.transFigure,
+               horizontalalignment='center',verticalalignment='top')
     
     if 'adj_fig_h' in kwrgs.keys():
         g.fig.set_figheight(figheight*kwrgs['adj_fig_h'], forward=True)
@@ -2439,11 +2603,19 @@ def finalfigure(xrdata, file_name, kwrgs):
 
     cbar_ax = g.fig.add_axes([0.25, cbar_vert, 
                                   0.5, cbar_hght], label='xbar')
-    cbar = plt.colorbar(im, cax=cbar_ax, orientation='horizontal', 
-                 extend=extend)
+
+    if 'clim' in kwrgs.keys(): #adjust the range of colors shown in cbar
+        cnorm = np.linspace(kwrgs['clim'][0],kwrgs['clim'][1],11)
+        vmin = kwrgs['clim'][0]
+    else:
+        cnorm = clevels
+    norm = colors.BoundaryNorm(boundaries=cnorm, ncolors=256)
+    cbar = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap, orientation='horizontal', 
+                 extend=extend, norm=norm)
+
     if 'extend' in kwrgs.keys():
         if kwrgs['extend'][0] == 'min':
-            cbar.cmap.set_under(kwrgs['extend'][1], alpha=0.2)
+            cbar.cmap.set_under(cbar.to_rgba(vmin))
     cbar.set_label(xrdata.attrs['units'], fontsize=16)
     cbar.ax.tick_params(labelsize=14)
 

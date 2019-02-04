@@ -309,7 +309,7 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='defau
 # Plotting
 # =============================================================================
 # =============================================================================
-def plotting_timeseries(test, ex):
+def plotting_timeseries(test, yrs_to_plot, ex):
     for lag in ex['lags']:
         #%%
         idx = ex['lags'].index(lag)
@@ -336,7 +336,7 @@ def plotting_timeseries(test, ex):
         df['RVrm'] = df['RV'].rolling(20, center=True, min_periods=5, 
               win_type=None).mean()
         
-        yrs_to_plot = [1985, 1990, 1995, 2000, 2007, 2012, 2015]
+        
         # check if yrs to plot are in test set:
         n_yrs_to_plot = len(yrs_to_plot)
         yrs_to_plot = [yr for yr in yrs_to_plot if yr in set(years)]
@@ -385,7 +385,7 @@ def plotting_timeseries(test, ex):
                fontweight='heavy', horizontalalignment='center')
         filename = '{} day lead time series prediction'.format(lag)
         file_name = os.path.join(ex['folder'],filename+'.png')
-#        g.fig.savefig(file_name ,dpi=250, frameon=True)
+        g.fig.savefig(file_name ,dpi=250, frameon=True)
         plt.show()
         #%%
 
