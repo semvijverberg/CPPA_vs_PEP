@@ -118,13 +118,9 @@ def load_data(ex):
         Prec_reg.coords['mask'] = mask
         Prec_reg.values = Prec_reg * mask_reg
         
-    ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
-                          ex['region'], ex['regionmcK'])
-    ex['figpathbase'] = os.path.join(ex['figpathbase'], ex['exppathbase'])
-    if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
+
     #ex['lags_idx'] = [12, 18, 24, 30]  
     #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
-    
     ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
     ex['n_conv'] = ex['n_yrs'] 
     return RV_ts, Prec_reg, ex
@@ -168,11 +164,6 @@ def main(RV_ts, Prec_reg, ex):
             ex['leave_n_out'] = True
             train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                               ex)    
-            foldername = 'Pattern_full_leave_{}_out_validation_{}_{}_tf{}_{}'.format(
-                    ex['leave_n_years_out'], ex['startyear'], ex['endyear'], 
-                    ex['tfreq'],ex['lags'])
-        
-            ex['exp_folder'] = os.path.join(ex['figpathbase'],foldername)
         
 #        elif (ex['leave_n_out'] == True) & (ex['ROC_leave_n_out'] == False):
         elif (ex['ROC_leave_n_out'] == False) or ex['method'][:5] == 'split':
@@ -200,7 +191,9 @@ def main(RV_ts, Prec_reg, ex):
         
         # appending tuple
         train_test_list.append( (train, test) )
-    return train_test_list, l_ds_Sem, l_ds_mcK, ex
+        
+    ex['train_test_list'] = train_test_list
+    return ex
 
 def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
     

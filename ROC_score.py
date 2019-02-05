@@ -161,17 +161,17 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
     
     #%%
     # store output:
-    ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
-                      dims=['lag'], name='score_diff_lags',
-                      attrs={'units':'-'})
-    ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
-                      dims=['lag'], name='score_diff_lags',
-                      attrs={'units':'-'})
+#    ds_mcK['score'] = xr.DataArray(data=ROC_mcK, coords=[ex['lags']], 
+#                      dims=['lag'], name='score_diff_lags',
+#                      attrs={'units':'-'})
+#    ds_Sem['score'] = xr.DataArray(data=ROC_Sem, coords=[ex['lags']], 
+#                      dims=['lag'], name='score_diff_lags',
+#                      attrs={'units':'-'})
     
     # store mean values of prediciton time serie
         
     
-    ex['score_per_run'].append([ex['test_years'], len(test['events']), ds_mcK, ds_Sem, ROC_boot])
+    ex['score_per_run'].append([ex['test_years'], len(test['events']), ROC_mcK, ROC_Sem, ROC_boot])
     return ex
 
 

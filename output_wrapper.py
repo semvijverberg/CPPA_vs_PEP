@@ -18,11 +18,15 @@ import multiprocessing as mp
 import time
 from ROC_score import plotting_timeseries
 
-if sys.argv != ['']:
+#output_dic_folder = '/Users/semvijverberg/surfdrive/McKinRepl/T2mmax_sst_Northern_PEPrectangle/random90_leave_5_out_1979_2017_tf1_lags[0,5,10,15,20,30,40,50]_mcKthresp_2.5deg_60nyr_95tperc_0.8tc_1rm_2019-02-05'
+
+if len(sys.argv) == 2:
     output_dic_folder = sys.argv[1]
+elif 'output_dic_folder' in globals():
+    output_dic_folder = output_dic_folder
 else:
     output_dic_folder = input("paste experiment folder:\n")
-#output_dic_folder = '/Users/semvijverberg/surfdrive/McKinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_lags[5,15,30,50]_mcKthresp_2.5deg_60nyr_95tperc_0.8tc_1rm_2019-02-05'
+
 filename = 'output_main_dic'
 dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
 ex = dic['ex']
@@ -65,11 +69,18 @@ dic_exp = ({'ts and valid'  :   (True,True),
             'Cov and valid' :   (False,True)
             })
 
+#%%
 
 
-
-def all_output_wrapper(ex, exp_key='only Cov'):
+def all_output_wrapper(dic, exp_key='only Cov'):
     #%%
+    # load settings
+    ex = dic['ex']
+    # load patterns
+    l_ds_Sem = dic['l_ds_Sem']
+    l_ds_mcK = dic['l_ds_mcK']
+    
+    # adapt settings for prediction
     ex['use_ts_logit'], ex['logit_valid'] = dic_exp[exp_key] 
     
     print(exp_key)
@@ -91,9 +102,6 @@ def all_output_wrapper(ex, exp_key='only Cov'):
             print(printline, file=text_file)
             
     
-    # load patterns
-    l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-    l_ds_Sem        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
     # perform prediciton
     ex, patterns_Sem, patterns_mcK = func_mcK.make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex)
     
@@ -101,11 +109,11 @@ def all_output_wrapper(ex, exp_key='only Cov'):
 # =============================================================================
 #   Plotting
 # =============================================================================
-    score_mcK       = np.round(ex['score_per_run'][-1][2]['score'], 2)
-    score_Sem       = np.round(ex['score_per_run'][-1][3]['score'], 2)
-    ROC_str_mcK      = ['{} days - ROC score {}'.format(ex['lags'][i], score_mcK[i].values) for i in range(len(ex['lags'])) ]
-    ROC_str_Sem      = ['{} days - ROC score {}'.format(ex['lags'][i], score_Sem[i].values) for i in range(len(ex['lags'])) ]
-    # Sem plot
+    score_mcK       = np.round(ex['score_per_run'][-1][2], 2)
+    score_Sem       = np.round(ex['score_per_run'][-1][3], 2)
+    ROC_str_mcK      = ['{} days - ROC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
+    ROC_str_Sem      = ['{} days - ROC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
+    # Sem plot 
     # share kwargs with mcKinnon plot
     
         
@@ -321,7 +329,7 @@ if __name__ == '__main__':
     pool = mp.Pool(num_workers)
     for exp_key in dic_exp.keys():
         
-        pool.apply_async(all_output_wrapper, args= (ex, exp_key))
+        pool.apply_async(all_output_wrapper, args= (dic, exp_key))
         
     pool.close()
     pool.join()

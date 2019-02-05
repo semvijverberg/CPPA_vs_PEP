@@ -83,6 +83,12 @@ if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
     ex['add_lsm']   = True
     ex['mask_file'] = 'mask_North_America_for_soil{}deg.nc'.format(ex['grid_red'])
 
+ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
+                      ex['region'], ex['regionmcK'])
+ex['figpathbase'] = os.path.join(ex['figpathbase'], ex['exppathbase'])
+if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
+
+
 RV_ts, Prec_reg, ex = func_mcK.load_data(ex)
 
 
@@ -110,7 +116,7 @@ n = 1
 
 
 
-ex['train_test_list'], l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
+l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
 
 # save ex setting in text file
 folder = os.path.join(ex['figpathbase'], ex['CPPA_folder'])
@@ -129,7 +135,9 @@ ex['folder'] = folder
 output_dic_folder = folder
 filename = 'output_main_dic'
 if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
-to_dict = dict( { 'ex'   :   ex } )
+to_dict = dict( { 'ex'      :   ex,
+                 'l_ds_Sem' : l_ds_Sem,
+                 'l_ds_mcK' : l_ds_mcK} )
 np.save(os.path.join(output_dic_folder, filename+'.npy'), to_dict)  
 
 # write output in textfile
