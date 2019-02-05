@@ -20,7 +20,116 @@ import matplotlib.ticker as mticker
 import cartopy.mpl.ticker as cticker
 import datetime, calendar
 import scipy 
+from ROC_score import ROC_score_wrapper
 flatten = lambda l: [item for sublist in l for item in sublist]
+
+
+def load_data(ex):
+    #'Mckinnonplot', 'U.S.', 'U.S.cluster', 'PEPrectangle', 'Pacific', 'Whole', 'Northern', 'Southern'
+    def oneyr(datetime):
+        return datetime.where(datetime.year==datetime.year[0]).dropna()
+    
+    if ex['load_mcK'][0] == '1':
+        # Load in mckinnon Time series
+        ex['RVname'] = 'T95' + ex['load_mcK'][1:]
+        ex['name']   = 'sst_NOAA'
+        ex['startyear'] = 1982 ; 
+        if ex['load_mcK'][1:] == 'bram':
+            T95name = 'T95_Bram_McK.csv' ; lpyr=True
+        else:
+            T95name = 'PEP-T95TimeSeries.txt'; lpyr=False
+        RVtsfull, datesmcK = read_T95(T95name, ex) 
+        ex['endyear'] = int(RVtsfull[-1].time.dt.year)
+        datesRV = make_datestr(datesmcK, ex,
+                                        ex['startyear'], ex['endyear'], lpyr=lpyr)
+        filename_precur = ('{}_1982-2017_2jan_31aug_dt-1days_{}deg'
+                        '.nc'.format(ex['name'], ex['grid_res']))
+    else:
+        # load ERA-i Time series
+        print('\nimportRV_1dts is true, so the 1D time serie given with name \n'
+                  '{} is imported.'.format(ex['RVts_filename']))
+        filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
+        dicRV = np.load(filename,  encoding='latin1').item()
+        RVtsfull = dicRV['RVfullts95']
+        ex['mask'] = dicRV['RV_array']['mask']
+        xarray_plot(dicRV['RV_array']['mask'])
+        RVhour   = RVtsfull.time[0].dt.hour.values
+        datesRV = make_datestr(pd.to_datetime(RVtsfull.time.values), ex, 
+                                        ex['startyear'], ex['endyear'])
+        # add RVhour to daily dates
+        datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
+        filename_precur = '{}_{}-{}_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+                           ex['startyear'], ex['endyear'], ex['grid_res'])
+        filename_precur = '{}_1979-2017_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+                           ex['grid_res'])
+        ex['endyear'] = int(datesRV[-1].year)
+    
+    # Selected Time series of T95 ex['sstartdate'] until ex['senddate']
+    RVts = RVtsfull.sel(time=datesRV)
+    ex['n_oneyr'] = oneyr(datesRV).size
+    
+    RV_ts, datesmcK = time_mean_bins(RVts, ex)
+    #expanded_time = func_mcK.expand_times_for_lags(datesmcK, ex)
+    
+    if ex['mcKthres'] == 'mcKthres':
+        # binary time serie when T95 exceeds 1 std
+        ex['hotdaythres'] = RV_ts.mean(dim='time').values + RV_ts.std().values
+    else:
+        percentile = ex['mcKthres']
+        ex['hotdaythres'] = np.percentile(RV_ts.values, percentile)
+        ex['mcKthres'] = '{}'.format(percentile)
+    
+    # Load in external ncdf
+    filename = '{}_1979-2017_2mar_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+                ex['grid_res'])
+    #filename_precur = 'sm2_1979-2017_2jan_31okt_dt-1days_{}deg.nc'.format(ex['grid_res'])
+    #path = os.path.join(ex['path_raw'], 'tmpfiles')
+    # full globe - full time series
+    varfullgl = import_array(filename_precur, ex, path='pp')
+    
+    
+    # Converting Mckinnon timestemp to match xarray timestemp
+    #expandeddaysmcK = func_mcK.to_datesmcK(expanded_time, expanded_time[0].hour, varfullgl.time[0].dt.hour)
+    # region mckinnon - expanded time series
+    #Prec_reg = func_mcK.find_region(varfullgl.sel(time=expandeddaysmcK), region=ex['region'])[0]
+    Prec_reg = find_region(varfullgl, region=ex['region'])[0]
+    
+    if ex['tfreq'] != 1:
+        Prec_reg, datesvar = time_mean_bins(Prec_reg, ex)
+    
+    if ex['rollingmean'] != 1:
+        # Smoothen precursor time series by applying rolling mean
+        Prec_reg = rolling_mean_time(Prec_reg, ex)
+    
+    Prec_reg = Prec_reg.to_array().squeeze()
+    
+    
+    ## filter out outliers 
+    if ex['name'][:2]=='sm':
+        Prec_reg = Prec_reg.where(Prec_reg.values < 5.*Prec_reg.std(dim='time').values)
+    
+    if ex['add_lsm'] == True:
+        base_path_lsm = '/Users/semvijverberg/surfdrive/Scripts/rasterio/'
+        mask = import_array(ex['mask_file'].format(ex['grid_res']), ex,
+                                     base_path_lsm)
+        mask_reg = find_region(mask, region=ex['region'])[0]
+        mask_reg = mask_reg.to_array().squeeze()
+        mask = (('latitude', 'longitude'), mask_reg.values)
+        Prec_reg.coords['mask'] = mask
+        Prec_reg.values = Prec_reg * mask_reg
+        
+    ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
+                          ex['region'], ex['regionmcK'])
+    ex['figpathbase'] = os.path.join(ex['figpathbase'], ex['exppathbase'])
+    if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
+    #ex['lags_idx'] = [12, 18, 24, 30]  
+    #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
+    
+    ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
+    ex['n_conv'] = ex['n_yrs'] 
+    return RV_ts, Prec_reg, ex
+
+
 
 
 def main(RV_ts, Prec_reg, ex):
@@ -93,6 +202,77 @@ def main(RV_ts, Prec_reg, ex):
         train_test_list.append( (train, test) )
     return train_test_list, l_ds_Sem, l_ds_mcK, ex
 
+def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
+    
+    if (
+        ex['leave_n_out'] == True and ex['method'] == 'iter'
+        or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
+        ):
+        ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
+    
+    ex['score_per_run'] = []
+    # Purely train-test based on iterating over all years:
+    lats = Prec_reg.latitude
+    lons = Prec_reg.longitude
+    array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+    patterns_Sem = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+                          dims=['n_tests', 'lag','latitude','longitude'], 
+                          name='{}_tests_patterns_Sem'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+    Prec_mcK = find_region(Prec_reg, region=ex['region'])[0][0]
+    lats = Prec_mcK.latitude
+    lons = Prec_mcK.longitude
+    array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+    patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+                          dims=['n_tests', 'lag','latitude','longitude'], 
+                          name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+
+    for n in range(len(ex['train_test_list'])):
+        ex['n'] = n
+        train, test = ex['train_test_list'][n][0], ex['train_test_list'][n][1]
+        print('test year(s) {}, with {} events.'.format(
+                list(set(test['RV'].time.dt.year.values)), test['events'].size))
+        
+        ds_Sem = l_ds_Sem[n]
+        ds_mcK = l_ds_mcK[n]
+        # =============================================================================
+        # Make prediction based on logit model found in 'extract_precursor'
+        # =============================================================================
+        if ex['use_ts_logit'] == True:
+            ds_Sem = logit_fit(ds_Sem, Prec_reg, train, ex)
+            ds_Sem = timeseries_for_test(ds_Sem, test, ex)
+            name_for_ts = 'logit'
+    
+        elif ex['use_ts_logit'] == False:
+            name_for_ts = 'CPPA'
+        
+            # ds_Sem['ts_prediction'].plot()
+
+        # =============================================================================
+        # Calculate ROC score
+        # =============================================================================
+        ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
+        
+#        l_ds_Sem       = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
+#        l_ds_mcK       = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+
+        
+        if (ex['method'][:6] == 'random'):
+            if n == ex['n_stop']:
+                # remove empty n_tests
+                patterns_Sem = patterns_Sem.sel(n_tests=slice(0,ex['n_stop']))
+                patterns_mcK = patterns_mcK.sel(n_tests=slice(0,ex['n_stop']))
+                ex['n_conv'] = ex['n_stop']
+        
+        
+        patterns_Sem[n,:,:,:] = l_ds_Sem[n]['pattern_' + name_for_ts] * ds_Sem['std_train_min_lag']
+        patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
+        
+        
+
+    return ex, patterns_Sem, patterns_mcK
 
 # =============================================================================
 # =============================================================================
@@ -170,11 +350,10 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         
-        ex['exp_folder'] = '{}_leave_{}_out_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}{}_ts{}_{}tperc_{}tc_{}_{}'.format(
+        ex['CPPA_folder'] = '{}_leave_{}_out_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
                                 ex['method'], ex['leave_n_years_out'], ex['startyear'], ex['endyear'],
                               ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
-                              ex['n_oneyr'], ex['pval_logit_final'], ex['logit_valid'],
-                              ex['use_ts_logit'],
+                              ex['n_oneyr'], 
                               ex['perc_map'], ex['comp_perc'], ex['rollingmean'], now.strftime("%Y-%m-%d"))
       
         
@@ -182,25 +361,22 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
     
-        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}{}_ts{}_{}tperc_{}tc_{}_{}'.format(
+        ex['CPPA_folder'] = '{}_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
                             ex['method'], ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
-                          ex['n_oneyr'], ex['pval_logit_final'], ex['logit_valid'],
-                          ex['use_ts_logit'],
+                          ex['n_oneyr'], 
                           ex['perc_map'], ex['comp_perc'], ex['rollingmean'], now.strftime("%Y-%m-%d"))
         
 
-        
         
     if ex['leave_n_out']==True and ex['method']=='iter': # and ex['ROC_leave_n_out']==False
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         
-        ex['exp_folder'] = '{}_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}{}_ts{}_{}tperc_{}tc_{}_{}'.format(
+        ex['CPPA_folder'] = '{}_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
                             ex['method'], ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
-                          ex['n_oneyr'], ex['pval_logit_final'], ex['logit_valid'],
-                          ex['use_ts_logit'],
+                          ex['n_oneyr'], 
                           ex['perc_map'], ex['comp_perc'], ex['rollingmean'], now.strftime("%Y-%m-%d"))
                           
                           
@@ -211,15 +387,15 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
         test = train.copy()
 
 
-        ex['exp_folder'] = 'hindcast_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}{}_ts{}_{}tperc_{}tc_{}_{}'.format(
+        ex['CPPA_folder'] = 'hindcast_{}_{}_tf{}_lags{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
                           ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['lags'], ex['mcKthres'], ex['grid_res'],
-                          ex['n_oneyr'], ex['pval_logit_final'], ex['logit_valid'],
-                          ex['use_ts_logit'],
+                          ex['n_oneyr'], 
                           ex['perc_map'], ex['comp_perc'], ex['rollingmean'], now.strftime("%Y-%m-%d"))
         
         ex['test_years'] = 'all_years'
         print('Training on all years')
+    ex['CPPA_folder'] = ex['CPPA_folder'].replace(' ' ,'')
 
     #%%
     
@@ -242,6 +418,11 @@ def extract_precursor(Prec_reg, train, test, ex):
     pat_num_CPPA = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='commun_numb_init', 
                           attrs={'units':'Precursor regions'})
+    
+    array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
+    std_train_lag = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+                          dims=['lag','latitude','longitude'], name='std_train_min_lag', 
+                          attrs={'units':'std [-]'})
 
     pat_num_CPPA.name = 'commun_numbered'
     
@@ -284,16 +465,17 @@ def extract_precursor(Prec_reg, train, test, ex):
         event_idx = [list(dates_train.values).index(E) for E in event_train.values]
         binary_events = np.zeros(dates_train.size)    
         binary_events[event_idx] = 1
-        ts_3d = Prec_train.sel(time=dates_train_min_lag)
+        std_train_lag[idx] = Prec_train.sel(time=dates_train_min_lag).std(dim='time')
+        ts_3d = Prec_train.sel(time=dates_train_min_lag)/std_train_lag[idx]
         #%%
         # extract precursor regions composite approach
-        composite_p1, xrnpmap_p1, list_region_info, bin_event_trainwghts = extract_regs_p1(
-                                                events_min_lag, ts_3d, binary_events, ex)  
+        composite_p1, xrnpmap_p1, list_region_info = extract_regs_p1(events_min_lag,
+                                                     ts_3d, std_train_lag[idx], ex)  
 #        composite_p1.plot() 
 #        xrnpmap_p1.plot()
      
 
-        pattern_CPPA[idx] = composite_p1
+        pattern_CPPA[idx] = composite_p1.where(composite_p1.mask == True)
         
         pat_num_CPPA[idx] = xrnpmap_p1
         
@@ -302,7 +484,7 @@ def extract_precursor(Prec_reg, train, test, ex):
 
         
     ds_Sem = xr.Dataset( {'pattern_CPPA' : pattern_CPPA, 'pat_num_CPPA' : pat_num_CPPA,
-                          'weights' : weights } )
+                          'weights' : weights, 'std_train_min_lag' : std_train_lag } )
                           
                           
                           
@@ -315,7 +497,7 @@ def extract_precursor(Prec_reg, train, test, ex):
 # =============================================================================
 # =============================================================================
 
-def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
+def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
     x=0
 #    T, pval, mask_sig = Welchs_t_test(sample, full, alpha=0.01)
 #    threshold = np.reshape( mask_sig, (mask_sig.size) )
@@ -329,119 +511,8 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     comp_years = list(events_min_lag.time.dt.year.values)
 
 
-    ts_3d_trainwghts = ts_3d.copy()
-#    ts_3d_trainwghts = ts_3d_trainwghts/ts_3d_trainwghts.std(dim='time')
-    bin_event_trainwghts = binary_events
-    
-# =============================================================================
-# New (more balanced)
-# =============================================================================
-    
-    def create_chunks(all_yrs_set, n_out, chunks):
-        '''yr_prior are years which have priority to be part of the chunk '''
-        # determine priority in random sampling
-        # count what years are the least taken out of the composite
-        def find_priority(chunks, all_yrs_set):
-            count = np.zeros( (len(all_yrs_set)) )
-            for yr in all_yrs_set:
-                idx = all_yrs_set.index(yr)
-                count[idx] = np.sum( [chnk.count(yr) for chnk in chunks] )
-            list_idx_1 = list(np.argwhere(count == count.min()))
-            list_idx_2 = list(np.argwhere(count != count.max()))
-            
-            all_yrs = all_yrs_set.copy()    
-            yr_prior_1 = [all_yrs[int(i)] for i in list_idx_1]
-            yr_prior_2 = [all_yrs[int(i)] for i in list_idx_2 if i not in list_idx_1]
-            return yr_prior_1, yr_prior_2, count
-        
-        yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
-        
-        
-        for yr in all_yrs_set:    
-            # yr is always going to be part of chunk
-            if len(yr_prior_1) != 0 and yr in yr_prior_1:
-                yr_prior_1.remove(yr)
-            
-            # resplenish every time half the years have passed
-            if all_yrs_set.index(yr) < 0.5*len(all_yrs_set) or len(yr_prior_1) == 0:
-                yr_prior_1, yr_prior_2 = find_priority(chunks, all_yrs_set)[:2]
-                if len(yr_prior_1) != 0 and yr in yr_prior_1:
-                    yr_prior_1.remove(yr)
-            
-            years_to_add = [[yr]]
-            n_choice = n_out - 1
-            
-            if len(yr_prior_1) >= n_choice:
-                
-                # yr of for loop iteration is always in list, 
-                # give priority to yr_prior_1
-                
-                yrs_to_list  = list(np.random.choice(yr_prior_1, n_choice, replace=False))
-                years_to_add.append(yrs_to_list)
-#                years_to_add = flatten(years_to_add)
-                # the year that is added has now reduced priority
-                yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
-                if len(flatten(years_to_add)) != n_out:
-                    print(yr_prior_1)
-                    print(yr_prior_2)
-                    print(years_to_add)
-                    print('first')
-                    break
-                
-            elif len(yr_prior_1) < n_choice:# and len(yr_prior_1) != 0:
-                
-                yr_prior_1, yr_prior_2 = find_priority(chunks, all_yrs_set)[:2]
-                if len(yr_prior_1) != 0 and yr in yr_prior_1:
-                    yr_prior_1.remove(yr)
-                
-                n_out_part = n_choice - len(yr_prior_1)
-                
-                # if there are still sufficient years left in yr_prior_1, just pick them
-                if n_out_part < len(yr_prior_1):
-                    yrs_to_list  = list(np.random.choice(yr_prior_1, n_out_part, replace=False))
-                # if not, add what is left in yr_prior_1
-                else:
-                    yrs_to_list = yr_prior_1
-                years_to_add.append(yrs_to_list)
-#                years_to_add = flatten(years_to_add)
-                
-                # the year that is added has now reduced priority
-                yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
-                
-                # what is left is sampled from yr_prior_2
-                
-                n_out_left = n_out - len(flatten(years_to_add))
-                
-                # ensure that there will be years in prior_2
-                if len(yr_prior_2) < n_out_left and len(yr_prior_2) != 0:
-                    # add years that are left in yr_prior_2
-                    years_to_add.append(yr_prior_2)
-                    n_out_left = n_out - len(years_to_add)
-#                    years_to_add = flatten(years_to_add)
-                elif len(yr_prior_2) == 0 or n_out_left != 0:
-                    # create new yr_prior_2
-                    yr_prior_2 = [yr for yr in all_yrs_set.copy() if yr not in flatten(years_to_add)]
-                
-                    yrs_to_list  = list(np.random.choice(yr_prior_2, n_out_left, replace=False))
-                    years_to_add.append( yrs_to_list )
-#                    years_to_add = flatten(years_to_add)
-    
-                
-                if len(flatten(years_to_add)) != n_out:
-                    print('second')
-                    print(yr_prior_1)
-                    print(yr_prior_2)
-                    print(n_out_left)
-                    print(n_out)
-                    print(years_to_add)
-                    break
-                
-            chunks.append( flatten(years_to_add) )
-            
-                
-        yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
-  
-        return chunks, count
+    ts_3d_train_n = ts_3d.copy()
+
 
     all_yrs_set = list(set(ts_3d.time.dt.year.values))    
     ex['n_ch1'] = 1
@@ -449,7 +520,7 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     years_n_out = [2, 3, 4, 5]
     for n_out in years_n_out:    
         chunks, count = create_chunks(all_yrs_set, n_out, chunks)
-    #%%        
+  
 
 
     count = np.zeros( (len(all_yrs_set)) )
@@ -466,8 +537,13 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
         # exclude years in event time series
         one_out_idx_ev = [i for i in range(len(comp_years) ) if comp_years[i] in yrs_trainfeat]
         event_one_out = events_min_lag.isel( time = one_out_idx_ev)
-        comp_subset = ts_3d_trainwghts.sel(time=event_one_out)
-        # normalized within composite
+        comp_subset = ts_3d_train_n.sel(time=event_one_out)
+        
+        # region which are more constrained compared to whole training set 
+        # are given higher wgths
+#        wgths_constrain = (comp_subset.std(dim='time')/std_train_lag)
+        # normalized over whole training set
+        
         mean = comp_subset.mean(dim='time') #/ comp_subset.std(dim='time')
         
 
@@ -524,9 +600,9 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
     
     sum_count = np.reshape(weights, (lat_grid.size, lon_grid.size))
     weights = sum_count / np.max(sum_count)
-    ts_3d_trainwghts.values = ts_3d_trainwghts.values * weights
+    ts_3d_train_n.values = ts_3d_train_n.values * weights
     ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                         regions_for_ts, ts_3d_trainwghts, Corr_Coeff)[:2]
+                                         regions_for_ts, ts_3d_train_n, Corr_Coeff)[:2]
             
     
     # reshape to latlon grid
@@ -546,7 +622,7 @@ def extract_regs_p1(events_min_lag, ts_3d, binary_events, ex):
 #    composite_p1.plot.contourf()  
     list_region_info = [Regions_lag_i, ts_regions_lag_i, sign_ts_regions, weights]
     #%%
-    return composite_p1, xrnpmap_init, list_region_info, bin_event_trainwghts
+    return composite_p1, xrnpmap_init, list_region_info
 
 
 def logit_fit(ds_Sem, Prec_reg, train, ex):
@@ -613,15 +689,16 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
         mask = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
         # normal mean of extracted regions
         composite_p1 = ds_Sem['pattern_CPPA'].sel(lag=lag).where(mask==True)
-        # actor/precursor full 3d timeseries at RV period minus lag
+        # training perdiod (excluding info from test part)
         Prec_trainsel = Prec_reg.isel(time=train['Prec_train_idx'])
-        ts_3d = Prec_trainsel.sel(time=dates_train_min_lag)
-#        ts_3d_n = ts_3d/ts_3d.std(dim='time')
-        ts_3d_nw = ts_3d * ds_Sem['weights'].sel(lag=lag)
+        # actor/precursor full 3d timeseries at RV period minus lag
+        ts_3d = Prec_trainsel.sel(time=dates_train_min_lag)/ds_Sem['std_train_min_lag'][idx]
+        # normalized over std within dates_train_min_lag
+        ts_3d_nw = (ts_3d/ts_3d.std(dim='time')) * ds_Sem['weights'].sel(lag=lag)
         
 
         
-        regions_for_ts = np.arange(ds_Sem['pat_num_CPPA'].min(), ds_Sem['pat_num_CPPA'][idx].max())
+        regions_for_ts = np.arange(ds_Sem['pat_num_CPPA'].min(), ds_Sem['pat_num_CPPA'][idx].max()+1E-09)
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
 #        mean_n = composite_p1/ts_3d.std(dim='time')
         npmean        = composite_p1.values
@@ -758,7 +835,7 @@ def timeseries_for_test(ds_Sem, test, ex):
     #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
     
         var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
-        var_test_reg = test['Prec'].sel(time=dates_min_lag) 
+        var_test_reg_n = test['Prec'].sel(time=dates_min_lag)/ds_Sem['std_train_min_lag'][idx] 
         
         # add more weight based on robustness
         
@@ -769,11 +846,11 @@ def timeseries_for_test(ds_Sem, test, ex):
         xrpattern_lag_i = ds_Sem['pat_num_logit'].sel(lag=lag)
         regions_for_ts = np.arange(xrpattern_lag_i.min(), xrpattern_lag_i.max()+1)
         
-        var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
+        var_test_reg_nw = var_test_reg_n * ds_Sem['weights'].sel(lag=lag)
         
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(
                         xrpattern_lag_i.values, regions_for_ts, 
-                        var_test_reg, mean)[:2]
+                        var_test_reg_nw, mean)[:2]
 
 
         ts_regions_lag_i = ts_regions_lag_i[:,:] * sign_ts_regions[None,:]
@@ -1579,6 +1656,113 @@ def merge_neighbors(lsts):
   return sets
 
 
+def create_chunks(all_yrs_set, n_out, chunks):
+    '''yr_prior are years which have priority to be part of the chunk '''
+    # determine priority in random sampling
+    # count what years are the least taken out of the composite
+    def find_priority(chunks, all_yrs_set):
+        count = np.zeros( (len(all_yrs_set)) )
+        for yr in all_yrs_set:
+            idx = all_yrs_set.index(yr)
+            count[idx] = np.sum( [chnk.count(yr) for chnk in chunks] )
+        list_idx_1 = list(np.argwhere(count == count.min()))
+        list_idx_2 = list(np.argwhere(count != count.max()))
+        
+        all_yrs = all_yrs_set.copy()    
+        yr_prior_1 = [all_yrs[int(i)] for i in list_idx_1]
+        yr_prior_2 = [all_yrs[int(i)] for i in list_idx_2 if i not in list_idx_1]
+        return yr_prior_1, yr_prior_2, count
+    
+    yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
+    
+    
+    for yr in all_yrs_set:    
+        # yr is always going to be part of chunk
+        if len(yr_prior_1) != 0 and yr in yr_prior_1:
+            yr_prior_1.remove(yr)
+        
+        # resplenish every time half the years have passed
+        if all_yrs_set.index(yr) < 0.5*len(all_yrs_set) or len(yr_prior_1) == 0:
+            yr_prior_1, yr_prior_2 = find_priority(chunks, all_yrs_set)[:2]
+            if len(yr_prior_1) != 0 and yr in yr_prior_1:
+                yr_prior_1.remove(yr)
+        
+        years_to_add = [[yr]]
+        n_choice = n_out - 1
+        
+        if len(yr_prior_1) >= n_choice:
+            
+            # yr of for loop iteration is always in list, 
+            # give priority to yr_prior_1
+            
+            yrs_to_list  = list(np.random.choice(yr_prior_1, n_choice, replace=False))
+            years_to_add.append(yrs_to_list)
+#                years_to_add = flatten(years_to_add)
+            # the year that is added has now reduced priority
+            yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
+            if len(flatten(years_to_add)) != n_out:
+                print(yr_prior_1)
+                print(yr_prior_2)
+                print(years_to_add)
+                print('first')
+                break
+            
+        elif len(yr_prior_1) < n_choice:# and len(yr_prior_1) != 0:
+            
+            yr_prior_1, yr_prior_2 = find_priority(chunks, all_yrs_set)[:2]
+            if len(yr_prior_1) != 0 and yr in yr_prior_1:
+                yr_prior_1.remove(yr)
+            
+            n_out_part = n_choice - len(yr_prior_1)
+            
+            # if there are still sufficient years left in yr_prior_1, just pick them
+            if n_out_part < len(yr_prior_1):
+                yrs_to_list  = list(np.random.choice(yr_prior_1, n_out_part, replace=False))
+            # if not, add what is left in yr_prior_1
+            else:
+                yrs_to_list = yr_prior_1
+            years_to_add.append(yrs_to_list)
+#                years_to_add = flatten(years_to_add)
+            
+            # the year that is added has now reduced priority
+            yr_prior_1 = [yr for yr in yr_prior_1 if yr not in yrs_to_list]
+            
+            # what is left is sampled from yr_prior_2
+            
+            n_out_left = n_out - len(flatten(years_to_add))
+            
+            # ensure that there will be years in prior_2
+            if len(yr_prior_2) < n_out_left and len(yr_prior_2) != 0:
+                # add years that are left in yr_prior_2
+                years_to_add.append(yr_prior_2)
+                n_out_left = n_out - len(years_to_add)
+#                    years_to_add = flatten(years_to_add)
+            elif len(yr_prior_2) == 0 or n_out_left != 0:
+                # create new yr_prior_2
+                yr_prior_2 = [yr for yr in all_yrs_set.copy() if yr not in flatten(years_to_add)]
+            
+                yrs_to_list  = list(np.random.choice(yr_prior_2, n_out_left, replace=False))
+                years_to_add.append( yrs_to_list )
+#                    years_to_add = flatten(years_to_add)
+
+            
+            if len(flatten(years_to_add)) != n_out:
+                print('second')
+                print(yr_prior_1)
+                print(yr_prior_2)
+                print(n_out_left)
+                print(n_out)
+                print(years_to_add)
+                break
+            
+        chunks.append( flatten(years_to_add) )
+        
+            
+    yr_prior_1, yr_prior_2, count = find_priority(chunks, all_yrs_set)
+  
+    return chunks, count
+
+
 def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
     '''
 	takes Corr Coeffs and defines regions by strength
@@ -2244,6 +2428,35 @@ def cross_correlation_patterns(full_timeserie, pattern):
     covself = xr.DataArray(covself, coords=[dates_test.values], dims=['time'])
     return covself
 
+def kornshell_with_input(args, ex):
+#    stopped working for cdo commands
+    '''some kornshell with input '''
+#    args = [anom]
+    import os
+    import subprocess
+    cwd = os.getcwd()
+    # Writing the bash script:
+    new_bash_script = os.path.join(cwd, "bash_script.sh")
+#    arg_5d_mean = 'cdo timselmean,5 {} {}'.format(infile, outfile)
+    #arg1 = 'ncea -d latitude,59.0,84.0 -d longitude,-95,-10 {} {}'.format(infile, outfile)
+    
+    bash_and_args = [new_bash_script]
+    [bash_and_args.append(arg) for arg in args]
+    with open(new_bash_script, "w") as file:
+        file.write("#!/bin/sh\n")
+        file.write("echo bash script output\n")
+        for cmd in range(len(args)):
+
+            print(args[cmd])
+            file.write("${}\n".format(cmd+1)) 
+    p = subprocess.Popen(bash_and_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, 
+                         stderr=subprocess.STDOUT)
+                         
+    out = p.communicate()
+    print(out[0].decode())
+    return
+
+
 # =============================================================================
 # =============================================================================
 # Plotting functions
@@ -2437,12 +2650,11 @@ def plot_oneyr_events(xarray, ex, test_year, folder, saving=False):
         filename = os.path.join(folder, 'ts_{}'.format(test_year))
         plt.savefig(filename+'.png', dpi=300)
 
-def plotting_wrapper(plotarr, filename, ex, kwrgs=None):
+def plotting_wrapper(plotarr, ex, filename=None,  kwrgs=None):
 #    map_proj = ccrs.Miller(central_longitude=240)  
     folder_name = os.path.join(ex['figpathbase'], ex['exp_folder'])
     if os.path.isdir(folder_name) != True : 
         os.makedirs(folder_name)
-    file_name = os.path.join(ex['figpathbase'], filename)
 
     if kwrgs == None:
         kwrgs = dict( {'title' : plotarr.name, 'clevels' : 'notdefault', 'steps':17,
@@ -2451,6 +2663,13 @@ def plotting_wrapper(plotarr, filename, ex, kwrgs=None):
     else:
         kwrgs = kwrgs
         kwrgs['title'] = plotarr.attrs['title']
+        
+    if filename != None:
+        file_name = os.path.join(ex['figpathbase'], filename)
+        kwrgs['savefig'] = True
+    else:
+        kwrgs['savefig'] = False
+        file_name = 'Users/semvijverberg/Downloads/test.png'
     finalfigure(plotarr, file_name, kwrgs)
     
 
@@ -2589,7 +2808,8 @@ def finalfigure(xrdata, file_name, kwrgs):
     cbar.set_label(xrdata.attrs['units'], fontsize=16)
     cbar.ax.tick_params(labelsize=14)
 
-    g.fig.savefig(file_name ,dpi=250, frameon=True)
+    if kwrgs['savefig'] != False:
+        g.fig.savefig(file_name ,dpi=250, frameon=True)
     #%%
     return
 
