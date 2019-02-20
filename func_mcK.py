@@ -515,7 +515,7 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
 #            threshold = np.percentile(nparray, ex['perc_map'])
         mask_threshold = np.array(abs(nparray) < ( threshold ), dtype=int)
         Corr_Coeff = np.ma.MaskedArray(nparray, mask=mask_threshold)
-        Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lats.values, lons.values, ex['min_n_gc'])
+        Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lats.values, lons.values, ex)
         iter_regions[idx] = Regions_lag_i
 #        if idx % 10 == 0.:
 #            plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.array(Regions_lag_i,dtype=int), (lats.size, lons.size)))
@@ -540,7 +540,7 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
 
     # retrieve regions sorted in order of 'strength'
     # strength is defined as an area weighted values in the composite
-    Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, ex['min_n_gc'])
+    Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, ex)
     
     assert np.sum(Regions_lag_i) != 0., ('No regions detected with these criteria.')
         
@@ -560,13 +560,7 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
     
     # regions investigated to create ts timeseries
     regions_for_ts = list(np.arange(1, n_regions_lag_i+1))
-    
-    sum_count = np.reshape(weights, (lat_grid.size, lon_grid.size))
-    weights = sum_count / np.max(sum_count)
-    ts_3d_train_n.values = ts_3d_train_n.values * weights
-    ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                         regions_for_ts, ts_3d_train_n, Corr_Coeff)[:2]
-            
+               
     
     # reshape to latlon grid
     npmap = np.reshape(Regions_lag_i, (lat_grid.size, lon_grid.size))
@@ -579,6 +573,12 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
     composite_p1.coords['mask'] = mask
     xrnpmap_init.coords['mask'] = mask
     xrnpmap_init = xrnpmap_init.where(xrnpmap_init.mask==True)
+
+    sum_count = np.reshape(weights, (lat_grid.size, lon_grid.size))
+    weights = sum_count / np.max(sum_count)
+    ts_3d_train_n.values = ts_3d_train_n.values * weights
+    ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
+                                         regions_for_ts, ts_3d_train_n, Corr_Coeff)[:2]
 
 #    plt.figure()
 #    xrnpmap_init.plot.contourf(cmap=plt.cm.tab10)   
@@ -1605,7 +1605,8 @@ def create_chunks(all_yrs_set, n_out, chunks):
     return chunks, count
 
 
-def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
+def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, ex):
+    #%%
     '''
 	takes Corr Coeffs and defines regions by strength
 
@@ -1636,48 +1637,65 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
 
 	#=====================
 	# Criteria 1: must bei geographical neighbors:
+    n_between = ex['prec_reg_max_d']
 	#=====================
     for i in indices_not_masked:
-        n = []	
-
-        col_i= i%lo
-        row_i = i//lo
-
-		# knoten links oben
-        if i==0:	
-            n= n+[lo-1, i+1, lo ]
-
-		# knoten rechts oben	
-        elif i== lo-1:
-            n= n+[i-1, 0, i+lo]
-
-		# knoten links unten
-        elif i==(la-1)*lo:
-            n= n+ [i+lo-1, i+1, i-lo]
-
-		# knoten rechts unten
-        elif i == la*lo-1:
-            n= n+ [i-1, i-lo+1, i-lo]
-
-		# erste zeile
-        elif i<lo:
-            n= n+[i-1, i+1, i+lo]
-	
-		# letzte zeile:
-        elif i>la*lo-1:
-            n= n+[i-1, i+1, i-lo]
-	
-		# erste spalte
-        elif col_i==0:
-            n= n+[i+lo-1, i+1, i-lo, i+lo]
-	
-		# letzt spalte
-        elif col_i ==lo-1:
-            n= n+[i-1, i-lo+1, i-lo, i+lo]
-	
-		# nichts davon
-        else:
-            n = n+[i-1, i+1, i-lo, i+lo]
+        neighb = []
+        def find_neighboors(i, lo):
+            n = []	
+    
+            col_i= i%lo
+            row_i = i//lo
+    
+    		# knoten links oben
+            if i==0:	
+                n= n+[lo-1, i+1, lo ]
+    
+    		# knoten rechts oben	
+            elif i== lo-1:
+                n= n+[i-1, 0, i+lo]
+    
+    		# knoten links unten
+            elif i==(la-1)*lo:
+                n= n+ [i+lo-1, i+1, i-lo]
+    
+    		# knoten rechts unten
+            elif i == la*lo-1:
+                n= n+ [i-1, i-lo+1, i-lo]
+    
+    		# erste zeile
+            elif i<lo:
+                n= n+[i-1, i+1, i+lo]
+    	
+    		# letzte zeile:
+            elif i>la*lo-1:
+                n= n+[i-1, i+1, i-lo]
+    	
+    		# erste spalte
+            elif col_i==0:
+                n= n+[i+lo-1, i+1, i-lo, i+lo]
+    	
+    		# letzt spalte
+            elif col_i ==lo-1:
+                n= n+[i-1, i-lo+1, i-lo, i+lo]
+    	
+    		# nichts davon
+            else:
+                n = n+[i-1, i+1, i-lo, i+lo]
+            return n
+        
+        for t in range(n_between+1):
+            direct_n = find_neighboors(i, lo)
+            if t == 0:
+                neighb.append(direct_n)
+            if t == 1:
+                for n in direct_n:
+                    ind_n = find_neighboors(n, lo)
+                    neighb.append(ind_n)
+        n = list(set(flatten(neighb)))
+        if i in n:
+            n.remove(i)
+        
 	
 	#=====================
 	# Criteria 2: must be all at least once be significanlty correlated 
@@ -1713,11 +1731,12 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
             if len(l)==0:
                 l =[]
                 A.mask[i]=True	
-			
-            else: l = l +[i]	
+    			
+            elif i not in l: 
+                l = l + [i]	
 		
 		
-            N_pot[i]=N_pot[i]+ l	
+            N_pot[i]=N_pot[i] + l	
 
 
 
@@ -1753,10 +1772,10 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
 	#---------------------------------------	
 	
     # keep only regions which are larger then the mean size of the regions
-    if minsize == 'mean':
+    if ex['min_n_gc'] == 'mean':
         n_nodes = int(np.mean([len(r) for r in Regions]))
     else:
-        n_nodes = minsize
+        n_nodes = ex['min_n_gc']
     
     R=[]
     Ar=[]
@@ -1803,6 +1822,7 @@ def define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, minsize='mean'):
         Regions_lag_i[list(Regions[j])]=i+1
     
     Regions_lag_i = np.array(Regions_lag_i, dtype=int)
+    #%%
     return Regions_lag_i
 
 
@@ -2586,9 +2606,8 @@ def finalfigure(xrdata, file_name, kwrgs):
         vmin=kwrgs['vmin']
         vmax=kwrgs['vmax']
         
-        clevels = np.linspace(vmin,vmax,kwrgs['steps'])
-#        if kwrgs['extend'][0] == 'min':
-#            clevels[0] = 0.
+        clevels = np.linspace(vmin, vmax,kwrgs['steps'])
+
     cmap = kwrgs['cmap']
     
     n_plots = xrdata[var].size
@@ -2677,18 +2696,25 @@ def finalfigure(xrdata, file_name, kwrgs):
     else:
         cnorm = clevels
     norm = colors.BoundaryNorm(boundaries=cnorm, ncolors=256)
-    cbar = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap, orientation='horizontal', 
+#    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+#    cbar = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap, orientation='horizontal', 
+#                 extend=extend, norm=norm)
+    cbar = plt.colorbar(im, cbar_ax, cmap=cmap, orientation='horizontal', 
                  extend=extend, norm=norm)
-
+    if 'cticks_center' in kwrgs.keys():
+        cbar.set_ticks(clevels + 0.5)
+        cbar.set_ticklabels(clevels+1, update_ticks=True)
+        cbar.update_ticks()
+    
     if 'extend' in kwrgs.keys():
         if kwrgs['extend'][0] == 'min':
             cbar.cmap.set_under(cbar.to_rgba(vmin))
     cbar.set_label(xrdata.attrs['units'], fontsize=16)
     cbar.ax.tick_params(labelsize=14)
-
+    #%%
     if kwrgs['savefig'] != False:
         g.fig.savefig(file_name ,dpi=250, frameon=True)
-    #%%
+    
     return
 
 

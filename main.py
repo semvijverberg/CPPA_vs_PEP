@@ -53,7 +53,7 @@ ex = dict(
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
-     'method'       :       'split99', #87  
+     'method'       :       'iter', #87  
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
@@ -64,7 +64,8 @@ ex = dict(
      'new_model_sel':       False,
      'mcKthres'     :       'mcKthres',
      'rollingmean'  :       1,
-     'add_lsm'      :       False}  # 'mcKthres'
+     'add_lsm'      :       False,
+     'prec_reg_max_d':      2}  # 'mcKthres'
      )
 
 
@@ -261,6 +262,52 @@ mcK_mean.name = 'Composite mean green rectangle: ROC {}'.format(score_mcK)
 mcK_mean.attrs['units'] = 'Kelvin'
 mcK_mean.attrs['title'] = 'Composite mean - Subjective green rectangle pattern'
 func_mcK.plotting_wrapper(mcK_mean, ex, filename, kwrgs=kwrgs)
+
+
+
+
+
+#%% Initial regions from only composite extraction:
+
+
+if ex['leave_n_out']:
+    subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
+    total_folder = os.path.join(ex['figpathbase'], subfolder)
+    if os.path.isdir(total_folder) != True : os.makedirs(total_folder)
+    years = range(ex['startyear'], ex['endyear'])
+    for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
+        yr = years[n]
+        pattern_num_init = l_ds_Sem[n]['pat_num_CPPA'].sel(lag=ex['lags'])
+        
+
+
+        pattern_num_init.attrs['title'] = ('{} - CPPA regions'.format(yr))
+        filename = os.path.join(subfolder, pattern_num_init.attrs['title'].replace(
+                                ' ','_')+'.png')
+        for_plt = pattern_num_init.copy()
+        for_plt.values = for_plt.values-0.5
+        kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
+                       'steps' : for_plt.max().values+2, 'subtitles': ROC_str_Sem,
+                       'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
+                       'cmap' : plt.cm.tab10, 'column' : 2,
+                       'cticks_center' : True} )
+        
+        func_mcK.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
+        
+#        if ex['logit_valid'] == True:
+#            pattern_num = l_ds_Sem[n]['pat_num_logit']
+#            pattern_num.attrs['title'] = ('{} - regions that were kept after logit regression '
+#                                         'pval < {}'.format(yr, ex['pval_logit_final']))
+#            filename = os.path.join(subfolder, pattern_num.attrs['title'].replace(
+#                                    ' ','_')+'.png')
+#            for_plt = pattern_num.copy()
+#            for_plt.values = for_plt.values-0.5
+#            kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
+#                           'steps' : for_plt.max()+, 'subtitles': ROC_str_Sem,
+#                           'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
+#                           'cmap' : plt.cm.tab10, 'column' : 2} )
+#            
+#            func_mcK.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
 
 
 
