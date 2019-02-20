@@ -175,17 +175,7 @@ def main(RV_ts, Prec_reg, ex):
                 
             ds_mcK = mcKmean(Prec_reg, train, ex)  
             
-            
-        if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
-            # only need single run
-            break
-        if (ex['method'][:5]=='split'):
-            # only need single run
-            break
-        if (ex['method'][:6] == 'random'):
-            if n == ex['n_stop']:
-                ex['n_conv'] = ex['n_stop']
-                break
+
         l_ds_Sem.append(ds_Sem)
         l_ds_mcK.append(ds_mcK)        
         
@@ -193,10 +183,21 @@ def main(RV_ts, Prec_reg, ex):
         train_test_list.append( (train, test) )
         
     ex['train_test_list'] = train_test_list
-    return ex
+            
+#    if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
+#        # only need single run
+#        break
+#    if (ex['method'][:5]=='split'):
+#        # only need single run
+#        break
+#    if (ex['method'][:6] == 'random'):
+#        if n == ex['n_stop']:
+#            ex['n_conv'] = ex['n_stop']
+#            break
+    return l_ds_Sem, l_ds_mcK, ex
 
 def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
-    
+    #%%
     if (
         ex['leave_n_out'] == True and ex['method'] == 'iter'
         or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
@@ -207,20 +208,6 @@ def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
         ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
     
     ex['score_per_run'] = []
-    # Purely train-test based on iterating over all years:
-    lats = Prec_reg.latitude
-    lons = Prec_reg.longitude
-    array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
-    patterns_Sem = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
-                          dims=['n_tests', 'lag','latitude','longitude'], 
-                          name='{}_tests_patterns_Sem'.format(ex['n_conv']), attrs={'units':'Kelvin'})
-    Prec_mcK = find_region(Prec_reg, region=ex['region'])[0][0]
-    lats = Prec_mcK.latitude
-    lons = Prec_mcK.longitude
-    array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
-    patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
-                          dims=['n_tests', 'lag','latitude','longitude'], 
-                          name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
 
     for n in range(len(ex['train_test_list'])):
         ex['n'] = n
@@ -228,44 +215,26 @@ def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
         print('test year(s) {}, with {} events.'.format(
                 list(set(test['RV'].time.dt.year.values)), test['events'].size))
         
-        ds_Sem = l_ds_Sem[n]
-        ds_mcK = l_ds_mcK[n]
+        ds_Sem = l_ds_Sem[n].sel(lag=ex['lags'])
+        ds_mcK = l_ds_mcK[n].sel(lag=ex['lags'])
+        
         # =============================================================================
         # Make prediction based on logit model found in 'extract_precursor'
         # =============================================================================
-        if ex['use_ts_logit'] == True:
+        if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
             ds_Sem = logit_fit(ds_Sem, Prec_reg, train, ex)
             ds_Sem = timeseries_for_test(ds_Sem, test, ex)
-            name_for_ts = 'logit'
-    
-        elif ex['use_ts_logit'] == False:
-            name_for_ts = 'CPPA'
-        
-            # ds_Sem['ts_prediction'].plot()
+            # info of logit fit is now appended to ds_Sem
+            l_ds_Sem[n] = ds_Sem
+
 
         # =============================================================================
         # Calculate ROC score
         # =============================================================================
         ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
-        
-#        l_ds_Sem       = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
-#        l_ds_mcK       = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-
-        
-        if (ex['method'][:6] == 'random'):
-            if n == ex['n_stop']:
-                # remove empty n_tests
-                patterns_Sem = patterns_Sem.sel(n_tests=slice(0,ex['n_stop']))
-                patterns_mcK = patterns_mcK.sel(n_tests=slice(0,ex['n_stop']))
-                ex['n_conv'] = ex['n_stop']
-        
-        
-        patterns_Sem[n,:,:,:] = l_ds_Sem[n]['pattern_' + name_for_ts] * ds_Sem['std_train_min_lag']
-        patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
-        
-        
-
-    return ex, patterns_Sem, patterns_mcK
+               
+    #%%
+    return ex, l_ds_Sem
 
 # =============================================================================
 # =============================================================================
@@ -298,7 +267,7 @@ def mcKmean(Prec_reg, train, ex):
                           dims=['lag','percentile'], name='mcK_mean_p_diff_lags')
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
-        event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
+        event_train = Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], Prec_train_mcK.time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
         dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
@@ -376,7 +345,7 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
     elif ex['leave_n_out'] == False:
         train = dict( { 'Prec'  : Prec_reg,
                         'RV'    : RV_ts,
-                        'events': Ev_timeseries(RV_ts, ex['hotdaythres'])})
+                        'events': Ev_timeseries(RV_ts, ex['hotdaythres'], ex)})
         test = train.copy()
 
 
@@ -429,7 +398,7 @@ def extract_precursor(Prec_reg, train, test, ex):
     for lag in ex['lags']:
 #            i = ex['lags'].index(lag)
         idx = ex['lags'].index(lag)
-        event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
+        event_train = Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
                                            Prec_train.time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
@@ -475,12 +444,12 @@ def extract_precursor(Prec_reg, train, test, ex):
         
         weights[idx] = list_region_info[-1] 
 
-        
+        #%%        
     ds_Sem = xr.Dataset( {'pattern_CPPA' : pattern_CPPA, 'pat_num_CPPA' : pat_num_CPPA,
                           'weights' : weights, 'std_train_min_lag' : std_train_lag } )
                           
                           
-                          
+    
     return ds_Sem
 
 
@@ -491,6 +460,7 @@ def extract_precursor(Prec_reg, train, test, ex):
 # =============================================================================
 
 def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
+    #%% 
     x=0
 #    T, pval, mask_sig = Welchs_t_test(sample, full, alpha=0.01)
 #    threshold = np.reshape( mask_sig, (mask_sig.size) )
@@ -498,7 +468,7 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
 #    plt.figure()
 #    plt.imshow(mask_sig)
     # divide train set into train-feature and train-weights part:
-#%% 
+
     lats = ts_3d.latitude
     lons = ts_3d.longitude
     comp_years = list(events_min_lag.time.dt.year.values)
@@ -653,7 +623,7 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
     for lag in ex['lags']:
 #            i = ex['lags'].index(lag)
         idx = ex['lags'].index(lag)
-        event_train = Ev_timeseries(train['RV'], ex['hotdaythres']).time
+        event_train = Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
         event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
                                            train['RV'].time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
@@ -679,16 +649,19 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
         
         
         np.warnings.filterwarnings('ignore')
-        mask = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
-        # normal mean of extracted regions
-        composite_p1 = ds_Sem['pattern_CPPA'].sel(lag=lag).where(mask==True)
+        mask_regions = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
         # training perdiod (excluding info from test part)
         Prec_trainsel = Prec_reg.isel(time=train['Prec_train_idx'])
-        # actor/precursor full 3d timeseries at RV period minus lag
-        ts_3d = Prec_trainsel.sel(time=dates_train_min_lag)/ds_Sem['std_train_min_lag'][idx]
-        # normalized over std within dates_train_min_lag
-        ts_3d_nw = (ts_3d/ts_3d.std(dim='time')) * ds_Sem['weights'].sel(lag=lag)
+        # actor/precursor full 3d timeseries at RV period minus lag, normalized over std within dates_train_min_lag
+        ts_3d_n = Prec_trainsel.sel(time=dates_train_min_lag)/ds_Sem['std_train_min_lag'][idx]
         
+        # ts_3d is given more weight to robust precursor regions
+        ts_3d_nw = ts_3d_n * ds_Sem['weights'].sel(lag=lag)
+        mask_notnan = (np.product(np.isnan(ts_3d_nw.values),axis=0)==False) # nans == False
+        mask = mask_notnan * mask_regions
+        # normal mean of extracted regions
+        composite_p1 = ds_Sem['pattern_CPPA'].sel(lag=lag).where(mask==True)
+        ts_3d_nw     = ts_3d_nw.where(mask==True)
 
         
         regions_for_ts = np.arange(ds_Sem['pat_num_CPPA'].min(), ds_Sem['pat_num_CPPA'][idx].max()+1E-09)
@@ -697,7 +670,14 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
         npmean        = composite_p1.values
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
                                 regions_for_ts, ts_3d_nw, npmean)[:2]
-                                         
+        check_nans = np.where(np.isnan(ts_regions_lag_i))
+        if check_nans[0].size != 0:
+            print('{} nans found in time series of region {}, dropping this region.'.format(
+                    check_nans[0].size, 
+                    regions_for_ts[check_nans[1]]))
+            regions_for_ts = np.delete(regions_for_ts, check_nans[1])
+            ts_regions_lag_i = np.delete(ts_regions_lag_i, check_nans[1], axis=1)
+            sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
 
         
 
@@ -861,70 +841,6 @@ def timeseries_for_test(ds_Sem, test, ex):
     
     #%%
     return ds_Sem
-
-
-#def logit_fit(composite_p1, list_region_info, bin_event_trainwghts, ex):
-##%%
-#    
-#    # normal mean of extracted regions
-#    norm_mean = composite_p1.where(composite_p1.mask==True)
-#    weights_comp = list_region_info[-1]
-#    ts_regions_lag_i, sign_ts_regions = list_region_info[1], list_region_info[2] 
-#    
-#    if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
-#        lat_grid = composite_p1.latitude.values
-#        lon_grid = composite_p1.longitude.values
-#        
-#        
-#        # get wgths and only regions that contributed to probability    
-#        if ex['new_model_sel'] == False:
-#            odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
-#                    ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
-#    
-#        if ex['new_model_sel'] == True:
-#            odds, regions_kept, combs_kept, logitmodel = NEW_train_weights_LogReg(
-#                    ts_regions_lag_i, sign_ts_regions, bin_event_trainwghts, ex)
-#            
-#        Regions_lag_i = list_region_info[0]
-#        upd_regions = np.zeros(Regions_lag_i.shape)
-#        for i in range(len(regions_kept)):
-#            reg = regions_kept[i]
-#            upd_regions[Regions_lag_i == reg] =  i+1
-#    
-#        # create map of precursor regions
-#        npmap = np.ma.reshape(upd_regions, (len(lat_grid), len(lon_grid)))
-#        mask_strongest = (npmap!=0) 
-#        npmap[mask_strongest==False] = 0
-#        xrnpmap = composite_p1.copy()
-#        xrnpmap.values = npmap
-#        
-#        # update the mask for the composite mean
-#        mask = (('latitude', 'longitude'), mask_strongest)
-#        composite_p1.coords['mask'] = mask
-#        xrnpmap.coords['mask'] = mask
-#        xrnpmap = xrnpmap.where(xrnpmap.mask==True)
-#        norm_mean = composite_p1.where(xrnpmap.mask==True)
-#        
-#    #    plt.figure()
-#    #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
-#        
-#    if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
-#        xrnpmap = None
-#        combs_kept = None
-#        logitmodel = None
-#        ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
-#        
-#    
-#    weighted_mean = norm_mean * weights_comp 
-#    xrwghts_comp = norm_mean.copy()
-#    xrwghts_comp.values = weights_comp
-#    
-#
-##    plt.figure() 
-##    weighted_mean.plot.contourf()
-#    #%%
-#    return weighted_mean, xrwghts_comp, xrnpmap, combs_kept, logitmodel
-
 
 
 def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
@@ -1435,73 +1351,6 @@ def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
 #    return ds_Sem
 
 
-
-        
-#def train_weights_LogReg(ts_regions_lag_i, sign_ts_regions, binary_events, ex):
-#    #%%
-#    from sklearn.linear_model import LogisticRegression
-#    from sklearn.model_selection import train_test_split
-#    # I want to the importance of each regions as is shown in the composite plot
-#    # A region will increase the probability of the events when it the coef_ is 
-#    # higher then 1. This means that if the ts shows high values, we have a higher 
-#    # probability of the events. To ease interpretability I will multiple each ts
-#    # with the sign of the region, to that each params should be above one (higher
-#    # coef_, higher probability of events)
-#    n_feat = len(ts_regions_lag_i[0])
-#    track_r_kept = np.arange(1, n_feat + 1)
-#    signs = sign_ts_regions
-#    X = ts_regions_lag_i / np.std(ts_regions_lag_i, axis=0) #!!!
-##    X = ts_regions_lag_i
-#    y = binary_events
-#    
-#    all_regions_significant = True
-#    while all_regions_significant:
-#        X_train = X * signs[None,:]
-#        y_train = y
-##        X_train = ts_regions_lag_i
-##        y_train = binary_events
-#    #    X_train, X_test, y_train, y_test = train_test_split(
-##                                   X[:,:], y, test_size=0.33)
-#        
-##        Log_reg = LogisticRegression(random_state=5, penalty = 'l2', solver='saga',
-##                           tol = 1E-9, multi_class='ovr', max_iter=8000, fit_intercept=False)
-##        model = Log_reg.fit(X_train, y_train)
-##        odds_SK = np.exp(model.coef_)
-##        print('SK logit score {}'.format(model.score(X_train,y_train)))
-#        import statsmodels.api as sm
-#        logit_model=sm.Logit(y_train,X_train)
-#        result = logit_model.fit(disp=0, method='newton', tol=1E-8, retall=True)
-#        if result.mle_retvals['converged'] == False:
-#            print('logistic regression did not converge, taking odds of prev'
-#                  'iteration or - if not present -, all odds (wghts) are equal')
-#            try:
-#                # capture odds array of previous iteration
-#                odds = odds
-#            except NameError as error:
-#                # if odds in not defined, then it has never converged and there
-#                # are no odds available, set all odds (wghts) to 1
-#                odds = np.ones(len(n_feat))
-#                
-#        elif result.mle_retvals['converged'] == True:
-#            odds = np.exp(result.params)
-#    #        print('statsmodel logit Odds of event happening conditioned on X (p / (1+p) = exp(params) \n{}\n'.format(odds))
-##            print(result.summary2())
-#            p_vals = result.pvalues
-#            regions_not_sign = np.where(p_vals >= ex['p_value_logit'])[0]
-#
-#
-#
-#            # update regions accounted for in fit
-#            X = np.delete(X, regions_not_sign, axis=1)
-#            track_r_kept = np.delete(track_r_kept, regions_not_sign)
-#            signs  = np.delete(signs, regions_not_sign, axis=0)
-#            if len(regions_not_sign) == 0:
-#                all_regions_significant = False
-#
-#    #%%        
-#    return odds, track_r_kept
-
-
 def rand_traintest(RV_ts, Prec_reg, ex):
     #%%
     all_years = np.arange(ex['startyear'], ex['endyear']+1)
@@ -1562,8 +1411,8 @@ def rand_traintest(RV_ts, Prec_reg, ex):
         Prec_test = Prec_reg.isel(time=Prec_test_idx)
         RV_test = RV_ts.isel(time=RV_test_idx)
         
-        event_train = Ev_timeseries(RV_train, ex['hotdaythres']).time
-        event_test = Ev_timeseries(RV_test, ex['hotdaythres']).time
+        event_train = Ev_timeseries(RV_train, ex['hotdaythres'], ex).time
+        event_test = Ev_timeseries(RV_test, ex['hotdaythres'], ex).time
         
         test_years = [yr for yr in list(set(RV_years)) if yr in rand_test_years]
         
@@ -1986,10 +1835,48 @@ def read_T95(T95name, ex):
     RVts = xr.DataArray(values, coords=[dates], dims=['time'])
     return RVts, dates
 
-def Ev_timeseries(xarray, threshold):   
+def Ev_timeseries(xarray, threshold, ex):  
+    #%%
+    tfreq_RVts = pd.Timedelta((xarray.time[1]-xarray.time[0]).values)
+    min_dur = ex['min_dur'] ; max_break = ex['max_break'] + 1
+    min_dur = pd.Timedelta(min_dur, 'd') / tfreq_RVts
+    max_break = pd.Timedelta(max_break, 'd') / tfreq_RVts
     Ev_ts = xarray.where( xarray.values > threshold) 
     Ev_dates = Ev_ts.dropna(how='all', dim='time').time
-    return Ev_dates
+    event_idx = [list(xarray.time.values).index(E) for E in Ev_dates.values]
+    peak_o_thresh = np.zeros((Ev_ts.size))
+    ev_num = 1
+    # group events inter event time less than max_break
+    for i in range(Ev_dates.size-1):
+        curr_ev = event_idx[i]
+        next_ev = event_idx[i+1]
+                    
+        if (next_ev - curr_ev) <= max_break:
+            peak_o_thresh[curr_ev] = ev_num
+        elif (next_ev - curr_ev) > max_break:
+            ev_num += 1
+    # remove events which are too short
+    for i in np.arange(1, max(peak_o_thresh)+1):
+        No_ev_ind = np.where(peak_o_thresh==i)[0]
+        # if shorter then min_dur, then not counted as event
+        if No_ev_ind.size < min_dur:
+            peak_o_thresh[No_ev_ind] = 0
+#             all other events are subtracted one
+#            peak_o_thresh[np.where(peak_o_thresh > i)[0]] -= 1
+    if np.sum(peak_o_thresh) < 1:
+        Events = Ev_ts.where(peak_o_thresh > 0 ).dropna(how='all', dim='time').time
+        pass
+    else:
+        peak_o_thresh[peak_o_thresh == 0] = np.nan
+        Ev_labels = xr.DataArray(peak_o_thresh, coords=[Ev_ts.coords['time']])
+        Ev_dates = Ev_ts.time.copy()     
+        Ev_dates['Ev_label'] = Ev_labels    
+        Ev_dates = Ev_dates.groupby('Ev_label').max().values
+        Ev_dates.sort()
+        Events = xarray.sel(time=Ev_dates)
+    
+    #%%
+    return Events
 
 def timeseries_tofit_bins(xarray, ex):
     datetime = pd.to_datetime(xarray['time'].values)
@@ -2070,8 +1957,8 @@ def time_mean_bins(xarray, ex):
                          ' supply an integer that fits {}'.format(
                              ex['tfreq'], one_yr.size))   
         print('\n Stepsize that do fit are {}'.format(possible))
-        print('\n Will shorten the \'subyear\', so that it the temporal'
-              'frequency fits in one year')
+        print('\n Will shorten the \'subyear\', so that the temporal'
+              ' frequency fits in one year')
         xarray, datetime = timeseries_tofit_bins(xarray, ex)
         one_yr = datetime.where(datetime.year == datetime.year[0]).dropna(how='any')
           
@@ -2520,9 +2407,7 @@ def plot_events_validation(pred1, pred2, obs, pt1, pt2, othreshold, test_year=No
 #    pt2 = Prec_threshold_mcK
 #    othreshold = ex['hotdaythres']
 #    test_year = int(crosscorr_Sem.time.dt.year[0])
-    
-    
-        
+
     
     def predyear(pred, obs):
         if str(type(test_year)) == "<class 'numpy.int64'>" or str(type(test_year)) == "<class 'int'>":
@@ -2807,6 +2692,98 @@ def finalfigure(xrdata, file_name, kwrgs):
     return
 
 
+def figure_for_schematic(reg_all_1, chunks, lats, lons, ex):
+    #%%
+    map_proj = ccrs.PlateCarree(central_longitude=220) 
+    regions = np.reshape(reg_all_1, (reg_all_1.shape[0], lats.size, lons.size) )
+    name_chnks = [str(chnk) for chnk in chunks]
+    regions = xr.DataArray(regions, coords=[name_chnks, lats, lons], 
+                           dims=['yrs_out', 'latitude', 'longitude'])
+    folder = os.path.join(ex['figpathbase'], ex['CPPA_folder'], 'schematic_fig/')
+    
+    plots = 9
+    subset = np.linspace(0,regions.yrs_out.size-1,plots, dtype=int)
+    regions = regions.isel(yrs_out=subset)
+    regions  = regions.sel(latitude=slice(60.,0.))
+    regions = regions.sel(longitude=slice(160, 250))
+    
+    if os.path.isdir(folder) != True : os.makedirs(folder)
+    for i in range(len(subset))[::int(plots/3)]:
+        i = int(i)
+        cmap = plt.cm.YlOrBr
+        fig = plt.figure(figsize = (14,9))
+        ax = plt.subplot(111, projection=map_proj) 
+        plotdata = regions.isel(yrs_out=i).where(regions.isel(yrs_out=i) > 0.)
+        plotdata.plot.pcolormesh(ax=ax, cmap=cmap, vmin=0, vmax=plots,
+                               transform=ccrs.PlateCarree(),
+                               subplot_kws={'projection': map_proj},
+                                add_colorbar=False, alpha=0.9)
+        ax.coastlines(color='black', alpha=0.8, linewidth=2)
+#        list_points = np.argwhere(regions.isel(yrs_out=i).values == 1)
+#        x_co = regions.isel(yrs_out=i).longitude.values
+#        y_co = regions.isel(yrs_out=i).latitude.values
+#        for p in list_points:
+#            ax.scatter(x_co[p[1]], y_co[p[0]], marker='$1$', color='black', 
+#                      s=70, transform=ccrs.PlateCarree())
+    #    ax.set_extent([-110, 150,0,80], crs=ccrs.PlateCarree())
+#        ax.set_extent([140, 266,0,60])
+#        ax.outline_patch.set_visible(False)
+#        ax.background_patch.set_visible(False)
+        ax.set_title('')
+        title = str(plotdata.yrs_out.values) 
+        t = ax.text(0.007, 0.01, 
+                    'Composite exluding {}'.format(title),
+            verticalalignment='bottom', horizontalalignment='left',
+            transform=ax.transAxes,
+            color='black', fontsize=25, weight='bold')
+        t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='red'))
+        
+        fig.savefig(folder+title+'.pdf',  bbox_inches='tight')
+#%%
+    # final figure
+    fig = plt.figure(figsize = (14,9))
+    ax = plt.subplot(111, projection=map_proj)
+    robustness = np.sum(regions,axis=0)
+    xrdata = regions.isel(yrs_out=i).copy()
+    xrdata.values = robustness
+    plotdata = xrdata.where(xrdata.values > 0.)
+    plotdata.plot.pcolormesh(ax=ax, cmap=cmap,
+                               transform=ccrs.PlateCarree(), vmin=0, vmax=plots,
+                               subplot_kws={'projection': map_proj},
+                                add_colorbar=False, alpha=0.5)
+#    xrdata = xrdata.where(xrdata.values > 0.8*plots)
+    xrdata.plot.contour(ax=ax, 
+                               transform=ccrs.PlateCarree(),
+                               colors=['purple'], levels=[0., ex['comp_perc'] * plots, plots],
+                               subplot_kws={'projection': map_proj},
+                               )
+    ax.coastlines(color='black', alpha=0.8, linewidth=2)
+    list_points = np.argwhere(xrdata.values > 0)
+    x_co = xrdata.longitude.values
+    y_co = xrdata.latitude.values
+#        list_points = list_points - ex['grid_res']/2.
+    for p in list_points:
+        value = str(int(xrdata.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
+        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${}$'.format(value), color='black', 
+                   s=70, transform=ccrs.PlateCarree())
+                  
+#    ax.outline_patch.set_visible(False)
+#    ax.background_patch.set_visible(False)
+    ax.set_title('')
+    title = 'Sum of incomplete composites'
+    t = ax.text(0.006, 0.992, ('Sum over 9 incomplete composites'),
+#                            'black contour line shows the gridcell passing the\n'
+#                            '\'Composite robustness threshold\''),
+        verticalalignment='top', horizontalalignment='left',
+        transform=ax.transAxes,
+        color='black', fontsize=20)
+    t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='green'))
+    
+    fig.savefig(folder+title+'.pdf', bbox_inches='tight')
+    #%%
+    return
+
+    
 ## Filter out outliers
 #n_std_kickout = 7
 ## outliers are now nan, all values that are lower then threshold are kept (==True)

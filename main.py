@@ -46,12 +46,14 @@ ex = dict(
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
-     'load_mcK'     :       '1',
+     'max_break'    :       0,
+     'min_dur'      :       2,
+     'load_mcK'     :       '0',
      'RV_name'      :       'T2mmax',
      'name'         :       'sst',
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
-     'method'       :       'iter', #87  
+     'method'       :       'split99', #87  
      'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
      'splittrainfeat':      False,
@@ -68,7 +70,7 @@ ex = dict(
 
 ex['plot_ts'] = True
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [0]#, 5, 10, 15, 20, 30, 40, 50] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 95
@@ -83,14 +85,13 @@ if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
     ex['add_lsm']   = True
     ex['mask_file'] = 'mask_North_America_for_soil{}deg.nc'.format(ex['grid_red'])
 
+
+RV_ts, Prec_reg, ex = func_mcK.load_data(ex)
+
 ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
                       ex['region'], ex['regionmcK'])
 ex['figpathbase'] = os.path.join(ex['figpathbase'], ex['exppathbase'])
 if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
-
-
-RV_ts, Prec_reg, ex = func_mcK.load_data(ex)
-
 
 print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear', 
             'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
@@ -120,6 +121,7 @@ l_ds_Sem, l_ds_mcK, ex = func_mcK.main(RV_ts, Prec_reg, ex)
 
 # save ex setting in text file
 folder = os.path.join(ex['figpathbase'], ex['CPPA_folder'])
+output_dic_folder = folder
 #assert (os.path.isdir(folder) != True), 'Overwrite?\n{}'.format(folder)
 if os.path.isdir(folder):
     answer = input('Overwrite?\n{}\ntype y or n:\n\n'.format(folder))
@@ -132,7 +134,6 @@ if os.path.isdir(folder) != True : os.makedirs(folder)
 ex['folder'] = folder
 
 # save output in numpy dictionary
-output_dic_folder = folder
 filename = 'output_main_dic'
 if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
 to_dict = dict( { 'ex'      :   ex,
@@ -161,7 +162,113 @@ args = ['python output_wrapper.py {}'.format(output_dic_folder)]
 func_mcK.kornshell_with_input(args, ex)
 
 
-#%%
+#%% Generate output in console
+
+filename = 'output_main_dic'
+dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
+
+# load settings
+ex = dic['ex']
+# load patterns
+l_ds_Sem = dic['l_ds_Sem']
+l_ds_mcK = dic['l_ds_mcK']
+
+# write output in textfile
+predict_folder = '{}{}_ts{}'.format(ex['pval_logit_final'], ex['logit_valid'], ex['use_ts_logit'])
+ex['exp_folder'] = os.path.join(ex['CPPA_folder'], predict_folder)
+predict_folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
+if os.path.isdir(predict_folder) != True : os.makedirs(predict_folder)
+
+txtfile = os.path.join(predict_folder, 'experiment_settings.txt')
+with open(txtfile, "w") as text_file:
+    max_key_len = max([len(i) for i in print_ex])
+    for key in print_ex:
+        key_len = len(key)
+        expand = max_key_len - key_len
+        key_exp = key + ' ' * expand
+        printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
+#            print(printline)
+        print(printline, file=text_file)
+        
+
+# perform prediciton
+ex, l_ds_Sem = func_mcK.make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex)
+
+    #%%
+# =============================================================================
+#   Plotting
+# =============================================================================
+    
+lats = Prec_reg.latitude
+lons = Prec_reg.longitude
+array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+patterns_Sem = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+                      dims=['n_tests', 'lag','latitude','longitude'], 
+                      name='{}_tests_patterns_Sem'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+Prec_mcK = func_mcK.find_region(Prec_reg, region=ex['region'])[0][0]
+lats = Prec_mcK.latitude
+lons = Prec_mcK.longitude
+array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
+patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
+                      dims=['n_tests', 'lag','latitude','longitude'], 
+                      name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
+
+for n in range(len(ex['train_test_list'])):
+    ex['n'] = n
+    if ex['use_ts_logit'] == True:
+        name_for_ts = 'logit'
+    elif ex['use_ts_logit'] == False:
+        name_for_ts = 'CPPA'
+        
+    if (ex['method'][:6] == 'random'):
+        if n == ex['n_stop']:
+            # remove empty n_tests
+            patterns_Sem = patterns_Sem.sel(n_tests=slice(0,ex['n_stop']))
+            patterns_mcK = patterns_mcK.sel(n_tests=slice(0,ex['n_stop']))
+            ex['n_conv'] = ex['n_stop']
+    
+    upd_pattern = l_ds_Sem[n]['pattern_' + name_for_ts].sel(lag=ex['lags'])
+    patterns_Sem[n,:,:,:] = upd_pattern * l_ds_Sem[n]['std_train_min_lag']
+    patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern'].sel(lag=ex['lags'])
+
+score_mcK       = np.round(ex['score_per_run'][-1][2], 2)
+score_Sem       = np.round(ex['score_per_run'][-1][3], 2)
+ROC_str_mcK      = ['{} days - ROC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
+ROC_str_Sem      = ['{} days - ROC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
+# Sem plot 
+# share kwargs with mcKinnon plot
+
+    
+kwrgs = dict( {'title' : '', 'clevels' : 'notdefault', 'steps':17,
+                    'vmin' : -0.5, 'vmax' : 0.5, 'subtitles' : ROC_str_Sem,
+                   'cmap' : plt.cm.RdBu_r, 'column' : 1} )
+
+mean_n_patterns = patterns_Sem.mean(dim='n_tests')
+mean_n_patterns.attrs['units'] = 'mean over {} runs'.format(ex['n_conv'])
+mean_n_patterns.attrs['title'] = 'Composite mean - Objective Precursor Pattern'
+mean_n_patterns.name = 'ROC {}'.format(score_Sem)
+filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']) )
+func_mcK.plotting_wrapper(mean_n_patterns, ex, filename, kwrgs=kwrgs)
+
+
+
+# mcKinnon composite mean plot
+filename = os.path.join(ex['exp_folder'], 'mcKinnon mean composite_tf{}_{}'.format(
+            ex['tfreq'], ex['lags']))
+mcK_mean = patterns_mcK.mean(dim='n_tests')
+kwrgs['subtitles'] = ROC_str_mcK
+mcK_mean.name = 'Composite mean green rectangle: ROC {}'.format(score_mcK)
+mcK_mean.attrs['units'] = 'Kelvin'
+mcK_mean.attrs['title'] = 'Composite mean - Subjective green rectangle pattern'
+func_mcK.plotting_wrapper(mcK_mean, ex, filename, kwrgs=kwrgs)
+
+
+
+
+
+
+
+
 
 #
 #
