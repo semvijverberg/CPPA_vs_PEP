@@ -46,7 +46,7 @@ ex = dict(
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
-     'max_break'    :       0,
+     'max_break'    :       1,
      'min_dur'      :       2,
      'load_mcK'     :       '0',
      'RV_name'      :       'T2mmax',
@@ -61,22 +61,21 @@ ex = dict(
      'logit_valid'  :       False,
      'pval_logit_first':    0.10,
      'pval_logit_final':    0.05,
-     'new_model_sel':       False,
      'mcKthres'     :       'mcKthres',
      'rollingmean'  :       1,
      'add_lsm'      :       False,
-     'prec_reg_max_d':      2}  # 'mcKthres'
+     'prec_reg_max_d':      1}  # 'mcKthres'
      )
 
 
 ex['plot_ts'] = True
 # [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0]#, 5, 10, 15, 20, 30, 40, 50] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
+ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50, 60] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
 ex['min_detection'] = 5
 ex['n_strongest'] = 15 
 ex['perc_map'] = 95
 ex['min_n_gc'] = 5
-ex['comp_perc'] = 0.80
+ex['comp_perc'] = 0.80 
 
 ex['region'] = 'Northern'
 ex['regionmcK'] = 'PEPrectangle'
@@ -94,15 +93,16 @@ ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
 ex['figpathbase'] = os.path.join(ex['figpathbase'], ex['exppathbase'])
 if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
 
-print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear', 
+print_ex = ['RV_name', 'name', 'load_mcK', 'max_break',
+            'min_dur', 'grid_res', 'startyear', 'endyear', 
             'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
             'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
             'pval_logit_first', 'pval_logit_final', 'rollingmean',
-            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
+            'mcKthres', 'perc_map', 'comp_perc',
             'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
-            'add_lsm', 'min_n_gc']
+            'add_lsm', 'min_n_gc', 'prec_reg_max_d']
 def printset(print_ex=print_ex, ex=ex):
     max_key_len = max([len(i) for i in print_ex])
     for key in print_ex:

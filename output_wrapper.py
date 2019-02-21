@@ -39,15 +39,16 @@ ex = dic['ex']
 # =============================================================================
 RV_ts, Prec_reg, ex = func_mcK.load_data(ex)
 
-print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear', 
+print_ex = ['RV_name', 'name', 'load_mcK', 'max_break',
+            'min_dur', 'grid_res', 'startyear', 'endyear', 
             'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
             'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
             'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
             'pval_logit_first', 'pval_logit_final', 'rollingmean',
-            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',
+            'mcKthres', 'perc_map', 'comp_perc',
             'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
-            'add_lsm', 'min_n_gc']
+            'add_lsm', 'min_n_gc', 'prec_reg_max_d']
 def printset(print_ex=print_ex, ex=ex):
     max_key_len = max([len(i) for i in print_ex])
     for key in print_ex:
@@ -62,9 +63,9 @@ printset()
 # =============================================================================
 # Finish load data
 # =============================================================================
-#%%
+
     
-#ex['lags'] = ex['lags'][:1]
+#ex['lags'] = ex['lags'][-1:]
 dic_exp = ({'ts and valid'  :   (True,True), 
             'only ts'       :   (True,False),
             'only Cov'      :   (False,False),
