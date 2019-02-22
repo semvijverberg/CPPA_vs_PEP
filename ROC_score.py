@@ -10,7 +10,7 @@ import random
 import os
 import numpy as np
 import pandas as pd
-import func_mcK
+import func_CPPA
 import xarray as xr
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -25,23 +25,23 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
     ROC_boot = np.zeros(len(ex['lags']))
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
-        dates_test = func_mcK.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+        dates_test = func_CPPA.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
                                            test['RV'].time[0].dt.hour)
         # select antecedant SST pattern to summer days:
         dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = func_mcK.find_region(test['Prec'], region=ex['regionmcK'])[0]
+        var_test_mcK = func_CPPA.find_region(test['Prec'], region=ex['regionmcK'])[0]
     #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
     
         var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
-        var_patt_mcK = func_mcK.find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
+        var_patt_mcK = func_CPPA.find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
         var_test_reg = test['Prec'].sel(time=dates_min_lag)        
         
-        crosscorr_mcK = func_mcK.cross_correlation_patterns(var_test_mcK, 
+        crosscorr_mcK = func_CPPA.cross_correlation_patterns(var_test_mcK, 
                                                             var_patt_mcK)
         if ex['use_ts_logit'] == False:
             # weight by robustness of precursors
             var_test_reg = var_test_reg * ds_Sem['weights'].sel(lag=lag)
-            crosscorr_Sem = func_mcK.cross_correlation_patterns(var_test_reg, 
+            crosscorr_Sem = func_CPPA.cross_correlation_patterns(var_test_reg, 
                                                             ds_Sem['pattern_CPPA'].sel(lag=lag))
         elif ex['use_ts_logit'] == True:
             crosscorr_Sem = ds_Sem['ts_prediction'][idx]
@@ -78,7 +78,7 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
                 ts_pred_Sem  = ((ex['test_ts_Sem'][idx]-np.mean(ex['test_ts_Sem'][idx]))/ \
                                           (np.std(ex['test_ts_Sem'][idx]) ) )                 
 
-#                func_mcK.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
+#                func_CPPA.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
                 
                 n_boot = 10
@@ -103,13 +103,13 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
 #            Prec_threshold_Sem = ds_Sem['perc'].sel(percentile=60 /10).values[0]
 #            
 #            # check if there are any detections
-#            Prec_det_mcK = (func_mcK.Ev_timeseries(crosscorr_mcK, 
+#            Prec_det_mcK = (func_CPPA.Ev_timeseries(crosscorr_mcK, 
 #                                           Prec_threshold_mcK).size > ex['min_detection'])
-#            Prec_det_Sem = (func_mcK.Ev_timeseries(crosscorr_Sem, 
+#            Prec_det_Sem = (func_CPPA.Ev_timeseries(crosscorr_Sem, 
 #                                           Prec_threshold_Sem).size > ex['min_detection'])
 #            
 #    #        # plot the detections
-#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
+#            func_CPPA.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
 #    
 #            if Prec_det_mcK == True:
@@ -148,10 +148,10 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
 #            Prec_threshold_mcK = np.percentile(crosscorr_mcK, 70)
             
             
-#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
+#            func_CPPA.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
             
-#            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], 
+#            func_CPPA.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], 
 #                                            ds_Sem['perc'].sel(percentile=5)), 
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
             
@@ -170,8 +170,8 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
     
     # store mean values of prediciton time serie
         
-    
-    ex['score_per_run'].append([ex['test_years'], len(test['events']), ROC_mcK, ROC_Sem, ROC_boot])
+    test_year = list(set(test['RV'].time.dt.year.values))
+    ex['score_per_run'].append([test_year, len(test['events']), ROC_mcK, ROC_Sem, ROC_boot])
     return ex
 
 
@@ -402,14 +402,14 @@ def plotting_timeseries(test, yrs_to_plot, ex):
 #    ROC_boot = np.zeros(len(ex['lags']))
 #    
 #    if ds['pattern'].name[:3] == 'mcK':
-#        var_test_reg = func_mcK.find_region(test['Prec'], region=ex['regionmcK'])[0]
+#        var_test_reg = func_CPPA.find_region(test['Prec'], region=ex['regionmcK'])[0]
 #    else:
 #        var_test_reg = test['Prec']
 #        
 #        
 #    for lag in ex['lags']:
 #        idx = ex['lags'].index(lag)
-#        dates_test = func_mcK.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+#        dates_test = func_CPPA.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
 #                                           test['Prec'].time[0].dt.hour)
 #        # select antecedant SST pattern to summer days:
 #        dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
@@ -419,12 +419,12 @@ def plotting_timeseries(test, yrs_to_plot, ex):
 #        var_test = var_test_reg.sel(time=dates_min_lag)   
 #    
 #        if ds['pattern'].name[:3] == 'mcK':
-#            pred_ts = func_mcK.cross_correlation_patterns(var_test, 
+#            pred_ts = func_CPPA.cross_correlation_patterns(var_test, 
 #                                                            ds['pattern'].sel(lag=lag))
 #        if ex['use_ts_logit'] == False and ds['pattern'].name[:3] != 'mcK':
 #            # weight by robustness of precursors
 #            var_test = var_test * ds['weights'].sel(lag=lag)
-#            pred_ts = func_mcK.cross_correlation_patterns(var_test, 
+#            pred_ts = func_CPPA.cross_correlation_patterns(var_test, 
 #                                                            ds['pattern'].sel(lag=lag))
 #        elif ex['use_ts_logit'] == True and ds['pattern'].name[:3] != 'mcK':
 #            pred_ts = ds['ts_prediction'][idx]
@@ -457,7 +457,7 @@ def plotting_timeseries(test, yrs_to_plot, ex):
 ##                Prec_threshold_mcK = np.percentile(ex['test_ts_mcK'][idx], 70)
 ##                Prec_threshold_Sem = np.percentile(ex['test_ts_Sem'][idx], 70)
 ##
-##                func_mcK.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
+##                func_CPPA.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
 ##                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
 #                
 #                n_boot = 10
@@ -476,7 +476,7 @@ def plotting_timeseries(test, yrs_to_plot, ex):
 #            Prec_threshold = ds['perc'].sel(percentile=60 /10).values[0]
 #            
 #            # check if there are any detections
-#            Prec_det = (func_mcK.Ev_timeseries(pred_ts, 
+#            Prec_det = (func_CPPA.Ev_timeseries(pred_ts, 
 #                                           Prec_threshold).size > ex['min_detection'])
 #
 #
@@ -506,10 +506,10 @@ def plotting_timeseries(test, yrs_to_plot, ex):
 ##            Prec_threshold_Sem = np.percentile(pred_ts, 70)
 #            
 #            
-##            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
+##            func_CPPA.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
 ##                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
 #            
-##            func_mcK.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], 
+##            func_CPPA.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], 
 ##                                            ds_Sem['perc'].sel(percentile=5)), 
 ##                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
 #            

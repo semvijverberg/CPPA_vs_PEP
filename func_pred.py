@@ -10,7 +10,7 @@ import xarray as xr
 import numpy as np
 import pandas as pd
 from ROC_score import ROC_score_wrapper
-import func_mcK
+import func_CPPA
 
 
 def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
@@ -89,11 +89,11 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
     for lag in ex['lags']:
 #            i = ex['lags'].index(lag)
         idx = ex['lags'].index(lag)
-        event_train = func_mcK.Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
-        event_train = func_mcK.to_datesmcK(event_train, event_train.dt.hour[0], 
+        event_train = func_CPPA.Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
+        event_train = func_CPPA.to_datesmcK(event_train, event_train.dt.hour[0], 
                                            train['RV'].time[0].dt.hour)
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
-        dates_train = func_mcK.to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
+        dates_train = func_CPPA.to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
                                            train['RV'].time[0].dt.hour)
         dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
         ### exlude leap days ###
@@ -134,7 +134,7 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
 #        mean_n = composite_p1/ts_3d.std(dim='time')
         npmean        = composite_p1.values
-        ts_regions_lag_i, sign_ts_regions = func_mcK.spatial_mean_regions(Regions_lag_i, 
+        ts_regions_lag_i, sign_ts_regions = func_CPPA.spatial_mean_regions(Regions_lag_i, 
                                 regions_for_ts, ts_3d_nw, npmean)[:2]
         check_nans = np.where(np.isnan(ts_regions_lag_i))
         if check_nans[0].size != 0:
@@ -178,12 +178,6 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
         
     #    plt.figure()
     #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
-        
-#        if (ex['use_ts_logit'] == False) and (ex['logit_valid'] == False):
-#            xrnpmap = None
-#            combs_kept = None
-#            logitmodel = None
-#            ex['ts_train_std'].append(np.nanstd(ts_regions_lag_i[:,:], axis=0))
             
         
         pattern_p2[idx] = norm_mean * ds_Sem['weights'].sel(lag=lag) 
@@ -211,11 +205,11 @@ def timeseries_for_test(ds_Sem, test, ex):
     
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
-        dates_test = func_mcK.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+        dates_test = func_CPPA.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
                                            test['Prec'].time[0].dt.hour)
         # select antecedant SST pattern to summer days:
         dates_min_lag = dates_test - pd.Timedelta(int(lag), unit='d')
-        var_test_mcK = func_mcK.find_region(test['Prec'], region=ex['regionmcK'])[0]
+        var_test_mcK = func_CPPA.find_region(test['Prec'], region=ex['regionmcK'])[0]
     #    full_timeserie_regmck = var_test_mcK.sel(time=dates_min_lag)
     
         var_test_mcK = var_test_mcK.sel(time=dates_min_lag)
@@ -232,7 +226,7 @@ def timeseries_for_test(ds_Sem, test, ex):
         
         var_test_reg_nw = var_test_reg_n * ds_Sem['weights'].sel(lag=lag)
         
-        ts_regions_lag_i, sign_ts_regions = func_mcK.spatial_mean_regions(
+        ts_regions_lag_i, sign_ts_regions = func_CPPA.spatial_mean_regions(
                         xrpattern_lag_i.values, regions_for_ts, 
                         var_test_reg_nw, mean)[:2]
 

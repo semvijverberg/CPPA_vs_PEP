@@ -20,7 +20,6 @@ import matplotlib.ticker as mticker
 import cartopy.mpl.ticker as cticker
 import datetime, calendar
 import scipy 
-from ROC_score import ROC_score_wrapper
 flatten = lambda l: [item for sublist in l for item in sublist]
 
 
@@ -404,7 +403,7 @@ def extract_precursor(Prec_reg, train, test, ex):
         ts_3d = Prec_train.sel(time=dates_train_min_lag)/std_train_lag[idx]
         #%%
         # extract precursor regions composite approach
-        composite_p1, xrnpmap_p1, list_region_info = extract_regs_p1(events_min_lag,
+        composite_p1, xrnpmap_p1, wghts_at_lag = extract_regs_p1(events_min_lag,
                                                      ts_3d, std_train_lag[idx], ex)  
 #        composite_p1.plot() 
 #        xrnpmap_p1.plot()
@@ -413,9 +412,8 @@ def extract_precursor(Prec_reg, train, test, ex):
         pattern_CPPA[idx] = composite_p1.where(composite_p1.mask == True)
         
         pat_num_CPPA[idx] = xrnpmap_p1
-        
-        
-        weights[idx] = list_region_info[-1] 
+    
+        weights[idx] = wghts_at_lag
 
         #%%        
     ds_Sem = xr.Dataset( {'pattern_CPPA' : pattern_CPPA, 'pat_num_CPPA' : pat_num_CPPA,
@@ -549,18 +547,16 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
 
     sum_count = np.reshape(weights, (lat_grid.size, lon_grid.size))
     weights = sum_count / np.max(sum_count)
-    ts_3d_train_n.values = ts_3d_train_n.values * weights
-    ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                         regions_for_ts, ts_3d_train_n, Corr_Coeff)[:2]
+#    ts_3d_train_n.values = ts_3d_train_n.values * weights
+#    ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
+#                                         regions_for_ts, ts_3d_train_n, Corr_Coeff)[:2]
 
 #    plt.figure()
 #    xrnpmap_init.plot.contourf(cmap=plt.cm.tab10)   
 #    composite_p1.plot.contourf()  
-    list_region_info = [Regions_lag_i, ts_regions_lag_i, sign_ts_regions, weights]
+#    list_region_info = [Regions_lag_i, ts_regions_lag_i, sign_ts_regions, weights]
     #%%
-    return composite_p1, xrnpmap_init, list_region_info
-
-
+    return composite_p1, xrnpmap_init, weights
 
 
 

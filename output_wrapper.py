@@ -11,10 +11,11 @@ script_dir = os.getcwd()
 sys.path.append(script_dir)
 if sys.version[:1] == '3':
     from importlib import reload as rel
-import func_mcK
+import func_CPPA
+import func_pred
 import numpy as np
 import xarray as xr 
-#matplotlib.use('WXAgg',warn=False, force=True)
+
 import matplotlib.pyplot as plt
 import multiprocessing as mp
 import time
@@ -37,7 +38,7 @@ ex = dic['ex']
 # =============================================================================
 # load data
 # =============================================================================
-RV_ts, Prec_reg, ex = func_mcK.load_data(ex)
+RV_ts, Prec_reg, ex = func_CPPA.load_data(ex)
 
 print_ex = ['RV_name', 'name', 'load_mcK', 'max_break',
             'min_dur', 'grid_res', 'startyear', 'endyear', 
@@ -106,7 +107,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
             
     
     # perform prediciton
-    ex, l_ds_Sem = func_mcK.make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex)
+    ex, l_ds_Sem = func_pred.make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex)
 
     #%%
 # =============================================================================
@@ -119,7 +120,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     patterns_Sem = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
                           dims=['n_tests', 'lag','latitude','longitude'], 
                           name='{}_tests_patterns_Sem'.format(ex['n_conv']), attrs={'units':'Kelvin'})
-    Prec_mcK = func_mcK.find_region(Prec_reg, region=ex['region'])[0][0]
+    Prec_mcK = func_CPPA.find_region(Prec_reg, region=ex['region'])[0][0]
     lats = Prec_mcK.latitude
     lons = Prec_mcK.longitude
     array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
@@ -162,7 +163,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     mean_n_patterns.attrs['title'] = 'Composite mean - Objective Precursor Pattern'
     mean_n_patterns.name = 'ROC {}'.format(score_Sem)
     filename = os.path.join(ex['exp_folder'], 'mean_over_{}_tests'.format(ex['n_conv']) )
-    func_mcK.plotting_wrapper(mean_n_patterns, ex, filename, kwrgs=kwrgs)
+    func_CPPA.plotting_wrapper(mean_n_patterns, ex, filename, kwrgs=kwrgs)
     
     
     
@@ -174,7 +175,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     mcK_mean.name = 'Composite mean green rectangle: ROC {}'.format(score_mcK)
     mcK_mean.attrs['units'] = 'Kelvin'
     mcK_mean.attrs['title'] = 'Composite mean - Subjective green rectangle pattern'
-    func_mcK.plotting_wrapper(mcK_mean, ex, filename, kwrgs=kwrgs)
+    func_CPPA.plotting_wrapper(mcK_mean, ex, filename, kwrgs=kwrgs)
     
     #if (ex['leave_n_out'] == True) and (ex['ROC_leave_n_out'] == False):
     #    # mcKinnon std plot
@@ -183,7 +184,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     #    mcK_std = patterns_mcK.std(dim='n_tests')
     #    mcK_std.name = 'Composite std: ROC {}'.format(score_mcK)
     #    mcK_std.attrs['units'] = 'Kelvin'
-    #    func_mcK.plotting_wrapper(mcK_std, filename, ex)
+    #    func_CPPA.plotting_wrapper(mcK_std, filename, ex)
     
     #%% Robustness of training precursor regions
     
@@ -223,7 +224,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                        'adj_fig_h' : 1.25, 'adj_fig_w' : 1., 
                        'hspace' : 0.02, 'wspace' : 0.08} )
         
-        func_mcK.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
+        func_CPPA.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
         
         
     #%%
@@ -233,10 +234,10 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
         xarray_plot(dicRV['RV_array']['mask'], path=folder, name='RV_mask', saving=True)
     
-    func_mcK.plot_oneyr_events(RV_ts, ex, 2012, ex['folder'], saving=True)
+    func_CPPA.plot_oneyr_events(RV_ts, ex, 2012, ex['folder'], saving=True)
     ## plotting same figure as in paper
     #for i in range(2005, 2010):
-    #    func_mcK.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
+    #    func_CPPA.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
     
     #%% Robustness accross training sets
     
@@ -285,7 +286,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                        'adj_fig_h' : 1.25, 'adj_fig_w' : 1., 
                        'hspace' : 0.02, 'wspace' : 0.08,
                        'ax_text': ax_text } )
-        func_mcK.plotting_wrapper(pers_patt, ex, filename, kwrgs=kwrgs)
+        func_CPPA.plotting_wrapper(pers_patt, ex, filename, kwrgs=kwrgs)
     #%% Weighing features if there are extracted every run (training set)
     # weighted by persistence of pattern over
     if ex['leave_n_out']:
@@ -308,7 +309,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     #        kwrgs = dict( {'title' : mean_n_patterns.name, 'clevels' : 'default', 'steps':17,
     #                        'vmin' : -3*mean_n_patterns.std().values, 'vmax' : 3*mean_n_patterns.std().values, 
     #                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
-            func_mcK.plotting_wrapper(mean_n_patterns, ex, filename, kwrgs=kwrgs)
+            func_CPPA.plotting_wrapper(mean_n_patterns, ex, filename, kwrgs=kwrgs)
     
     
     #%% Plotting prediciton time series vs truth:
@@ -320,15 +321,15 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     
     #%% Initial regions from only composite extraction:
     
-    
+    lags = ex['lags'][::5]
     if ex['leave_n_out']:
         subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
         total_folder = os.path.join(ex['figpathbase'], subfolder)
         if os.path.isdir(total_folder) != True : os.makedirs(total_folder)
         years = range(ex['startyear'], ex['endyear'])
-        for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
+        for n in np.arange(0, ex['n_conv'], 3, dtype=int): 
             yr = years[n]
-            pattern_num_init = l_ds_Sem[n]['pat_num_CPPA'].sel(lag=ex['lags'])
+            pattern_num_init = l_ds_new[n]['pat_num_CPPA'].sel(lag=lags)
             
     
     
@@ -337,12 +338,14 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                                     ' ','_')+'.png')
             for_plt = pattern_num_init.copy()
             for_plt.values = for_plt.values-0.5
+#            clevels = 
             kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
-                           'steps' : for_plt.max()+2, 'subtitles': ROC_str_Sem,
-                           'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
-                           'cmap' : plt.cm.tab10, 'column' : 2} )
+                           'steps' : ex['max_N_regs']+1, 'subtitles': ROC_str_Sem,
+                           'vmin' : 0, 'vmax' : ex['max_N_regs'], 
+                           'cmap' : plt.cm.tab20, 'column' : 2,
+                           'cticks_center' : True} )
             
-            func_mcK.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
+            func_CPPA.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
             
             if ex['logit_valid'] == True:
                 pattern_num = l_ds_Sem[n]['pat_num_logit']
@@ -355,9 +358,9 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                 kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
                                'steps' : for_plt.max()+2, 'subtitles': ROC_str_Sem,
                                'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
-                               'cmap' : plt.cm.tab10, 'column' : 2} )
+                               'cmap' : plt.cm.tab20, 'column' : 2} )
                 
-                func_mcK.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
+                func_CPPA.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
 
 #%%
 if __name__ == '__main__':    
