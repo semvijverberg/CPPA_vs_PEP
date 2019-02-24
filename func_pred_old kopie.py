@@ -13,7 +13,8 @@ from ROC_score import ROC_score_wrapper
 import func_CPPA
 
 
-def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
+
+def make_prediction_new(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
     #%%
     if (
         ex['leave_n_out'] == True and ex['method'] == 'iter'
@@ -29,12 +30,12 @@ def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
     for n in range(len(ex['train_test_list'])):
         ex['n'] = n
         train, test = ex['train_test_list'][n][0], ex['train_test_list'][n][1]
-        print('test year(s) {}, with {} events.'.format(
-                list(set(test['RV'].time.dt.year.values)), test['events'].size))
+        ex['test_year'] = list(set(test['RV'].time.dt.year.values))
+        print('test year(s) {}, with {} events.'.format(ex['test_year'],
+                                 test['events'].size))
         
         ds_Sem = l_ds_Sem[n].sel(lag=ex['lags'])
         ds_mcK = l_ds_mcK[n].sel(lag=ex['lags'])
-        
         # =============================================================================
         # Make prediction based on logit model found in 'extract_precursor'
         # =============================================================================
@@ -54,8 +55,187 @@ def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
     return ex, l_ds_Sem
 
 
+def make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex):
+    #%%
+    if (
+        ex['leave_n_out'] == True and ex['method'] == 'iter'
+        or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
+        ):
+        ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
+    
+    ex['score_per_run'] = []
+
+    for n in range(len(ex['train_test_list'])):
+        ex['n'] = n
+        train, test = ex['train_test_list'][n][0], ex['train_test_list'][n][1]
+        ex['test_year'] = list(set(test['RV'].time.dt.year.values))
+        print('test year(s) {}, with {} events.'.format(ex['test_year'],
+                                 test['events'].size))
+        
+        ds_Sem = l_ds_Sem[n].sel(lag=ex['lags'])
+        ds_mcK = l_ds_mcK[n].sel(lag=ex['lags'])
+        # =============================================================================
+        # Make prediction based on logit model found in 'extract_precursor'
+        # =============================================================================
+        if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
+            ds_Sem = logit_fit(ds_Sem, Prec_reg, train, ex)
+            
+            ds_Sem = timeseries_for_test(l_ds_Sem[n], test, ex)
+            # info of logit fit is now appended to ds_Sem
+#             = ds_Sem
+
+
+        # =============================================================================
+        # Calculate ROC score
+        # =============================================================================
+        ex = ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex)
+               
+    #%%
+    return ex, l_ds_Sem
+
+
+
+
+
+def logit_fit_new(l_ds_Sem, RV_ts, ex):
+
+    if (
+        ex['leave_n_out'] == True and ex['method'] == 'iter'
+        or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
+        ):
+        ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
+        ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
+    
+    # Event time series 
+    events = func_CPPA.Ev_timeseries(RV_ts, ex['hotdaythres'], ex).time
+    dates = pd.to_datetime(RV_ts.time.values)
+    event_idx = [list(dates.values).index(E) for E in events.values]
+    binary_events = np.zeros(dates.size)   
+    binary_events[event_idx] = 1
+    mask_events = np.array(binary_events, dtype=bool)
+    
+    
+    
+    for n in range(len(ex['train_test_list'])):
+        ex['n'] = n
+        
+        test =ex['train_test_list'][n][1]
+        ex['test_year'] = list(set(test['RV'].time.dt.year.values))
+        print('test year(s) {}, with {} events.'.format(ex['test_year'],
+                                 test['events'].size))
+        
+        ds_Sem = l_ds_Sem[n]
+        Composite = ds_Sem['pattern_CPPA']
+        lats = Composite.latitude.values
+        lons = Composite.longitude.values
+        
+        
+        logit_model = []
+        
+        
+        for lag_idx, lag in enumerate(ex['lags']):
+            # load in timeseries
+            csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
+            path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
+            data = pd.read_csv(path)
+            regions_for_ts = [int(r[0]) for r in data.columns[3:].values]
+            ts_regions_lag_i = data.iloc[:,3:].values
+            
+            # only training dataset
+            all_yrs = list(pd.to_datetime(data.date.values))
+            train_yrs = [all_yrs.index(d) for d in all_yrs if d.year not in ex['test_year']]
+            ts_regions_train = ts_regions_lag_i[train_yrs,:]
+            mask_events_train = mask_events[train_yrs]
+            sign_ts_regions = np.sign(np.mean(ts_regions_train[mask_events_train],axis=0))
+            binary_events_train = binary_events[train_yrs]
+            
+            # Perform training
+            odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
+                    ts_regions_train, sign_ts_regions, binary_events_train, ex)
+            
+            
+            # update regions that were kicked out
+            r_kept_idx = [i-1 for i in regions_for_ts if i in regions_kept]
+            ts_train_std_kept = ex['ts_train_std'][lag_idx][r_kept_idx]
+            Regions_lag_i = ds_Sem['pat_num_CPPA'][lag_idx].squeeze().values
+            Composite_lag = Composite[lag_idx]
+            
+            upd_regions = np.zeros(Regions_lag_i.shape)
+            for i in range(len(regions_kept)):
+                reg = regions_kept[i]
+                upd_regions[Regions_lag_i == reg] =  i+1
+        
+            # create map of precursor regions
+            npmap = np.ma.reshape(upd_regions, (len(lats), len(lons)))
+            mask_strongest = (npmap!=0) 
+            npmap[mask_strongest==False] = 0
+            xrnpmap = Composite_lag.copy()
+            xrnpmap.values = npmap
+            
+            # update the mask for the composite mean
+            mask = (('latitude', 'longitude'), mask_strongest)
+            Composite_lag.coords['mask'] = mask
+            xrnpmap.coords['mask'] = mask
+            xrnpmap = xrnpmap.where(xrnpmap.mask==True)
+            Composite_lag = Composite_lag.where(xrnpmap.mask==True)
+            
+        #    plt.figure()
+        #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
+                
+            # calculating test year
+            test_yrs = [all_yrs.index(d) for d in all_yrs if d.year in ex['test_year']]
+            ts_regions_test = ts_regions_lag_i[test_yrs,:]
+
+            ts_regions_lag_i = ts_regions_test[:,:] * sign_ts_regions[None,:]
+            # normalize time series (as done in the training)        
+            X_n = ts_regions_lag_i / ts_train_std_kept
+            
+            ts_pred = logitmodel.predict(X_n)
+            
+            idx = lag_idx
+            if (
+                ex['leave_n_out'] == True and ex['method'] == 'iter'
+                or ex['ROC_leave_n_out'] or ex['method'][:6] == 'random'
+                ):
+                if ex['n'] == 0:
+#                    ex['test_ts_mcK'][idx] = crosscorr_mcK.values 
+                    ex['test_ts_Sem'][idx] = ts_pred
+                    ex['test_RV'][idx]     = test['RV'].values
+                    ex['test_yrs'][idx]    = test['RV'].time
+        #                ex['test_RV_Sem'][idx]  = test['RV'].values
+            else:
+    #                update_ROCS = ex['test_ts_mcK'][idx].append(list(crosscorr_mcK.values))
+#                ex['test_ts_mcK'][idx] = np.concatenate( [ex['test_ts_mcK'][idx], crosscorr_mcK.values] )
+                ex['test_ts_Sem'][idx] = np.concatenate( [ex['test_ts_Sem'][idx], ts_pred] )
+                ex['test_RV'][idx]     = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )  
+                ex['test_yrs'][idx]    = np.concatenate( [ex['test_yrs'][idx], test['RV'].time] )  
+            
+#            pattern_p2[idx] = norm_mean * ds_Sem['weights'].sel(lag=lag) 
+#            pattern_num_p2[lag_idx] = xrnpmap
+            logit_model.append(logitmodel)
+            
+        ds_Sem['pattern_logit'] = Composite_lag
+        ds_Sem['pat_num_logit'] = xrnpmap
+        ds_Sem.attrs['logitmodel'] = logit_model
+
+    # info of logit fit is now appended to ds_Sem
+    l_ds_Sem[n] = ds_Sem
+
+    
+    return ex, l_ds_Sem
+
+
+    
 def logit_fit(ds_Sem, Prec_reg, train, ex):
 #%%
+    
+#    ex['output_ts_folder'] = os.path.join(ex['folder'], 'timeseries')
+#    if os.path.isdir(ex['output_ts_folder']) != True : os.makedirs(ex['output_ts_folder'])
     lats = Prec_reg.latitude
     lons = Prec_reg.longitude
     
@@ -76,7 +256,7 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
 #    logit_model = xr.DataArray(data=array, coords=[ex['lags']], 
 #                          dims=['lag'], name='logitmodel')
                           
-
+    
     logit_model = []
     
     ex['ts_train_std'] = []
@@ -144,15 +324,21 @@ def logit_fit(ds_Sem, Prec_reg, train, ex):
             regions_for_ts = np.delete(regions_for_ts, check_nans[1])
             ts_regions_lag_i = np.delete(ts_regions_lag_i, check_nans[1], axis=1)
             sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
-
+            
+#        name_trainset = 'testyr{}_{}_trainset.csv'.format(ex['test_year'], lag)
+#        spatcov = func_CPPA.cross_correlation_patterns(ts_3d_nw, ds_Sem['pat_num_CPPA'][idx])
+#        columns = list(regions_for_ts)
+#        columns.insert(0, 'spatcov')
+#        data = np.concatenate([spatcov.values[:,None], ts_regions_lag_i], axis=1)
+#        df = pd.DataFrame(data = data, index=pd.to_datetime(spatcov.time.values), columns=columns)
+#        df.to_csv(os.path.join(ex['output_ts_folder'], name_trainset ))
         
-
         lat_grid = composite_p1.latitude.values
         lon_grid = composite_p1.longitude.values
                 
         
         # get wgths and only regions that contributed to probability    
-
+        
         odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
                     ts_regions_lag_i, sign_ts_regions, binary_events, ex)
     

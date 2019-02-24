@@ -329,7 +329,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         years = range(ex['startyear'], ex['endyear'])
         for n in np.arange(0, ex['n_conv'], 3, dtype=int): 
             yr = years[n]
-            pattern_num_init = l_ds_new[n]['pat_num_CPPA'].sel(lag=lags)
+            pattern_num_init = l_ds_Sem[n]['pat_num_CPPA_clust'].sel(lag=lags)
             
     
     
@@ -338,7 +338,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                                     ' ','_')+'.png')
             for_plt = pattern_num_init.copy()
             for_plt.values = for_plt.values-0.5
-#            clevels = 
+
             kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
                            'steps' : ex['max_N_regs']+1, 'subtitles': ROC_str_Sem,
                            'vmin' : 0, 'vmax' : ex['max_N_regs'], 
