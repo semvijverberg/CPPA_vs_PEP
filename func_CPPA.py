@@ -137,8 +137,8 @@ def main(RV_ts, Prec_reg, ex):
 
     
     train_test_list = []
-    l_ds_Sem        = []
-    l_ds_mcK        = []        
+    l_ds_CPPA        = []
+    l_ds_PEP        = []        
     
     for n in range(ex['n_conv']):
         train_all_test_n_out = (ex['ROC_leave_n_out'] == True) & (n==0) 
@@ -176,18 +176,18 @@ def main(RV_ts, Prec_reg, ex):
             ds_mcK = mcKmean(Prec_reg, train, ex)  
             
 
-        l_ds_Sem.append(ds_Sem)
-        l_ds_mcK.append(ds_mcK)        
+        l_ds_CPPA.append(ds_Sem)
+        l_ds_PEP.append(ds_mcK)        
         
         # appending tuple
         train_test_list.append( (train, test) )
         
     ex['train_test_list'] = train_test_list
     
-    l_ds_Sem = grouping_regions_similar_coords(l_ds_Sem, ex, 
+    l_ds_CPPA = grouping_regions_similar_coords(l_ds_CPPA, ex, 
                      grouping = 'group_accros_tests_single_lag', eps=10)
     
-    store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex)
+    store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex)
 
 #    if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
 #        # only need single run
@@ -199,7 +199,7 @@ def main(RV_ts, Prec_reg, ex):
 #        if n == ex['n_stop']:
 #            ex['n_conv'] = ex['n_stop']
 #            break
-    return l_ds_Sem, l_ds_mcK, ex
+    return l_ds_CPPA, l_ds_PEP, ex
 
 
 
@@ -257,7 +257,7 @@ def mcKmean(Prec_reg, train, ex):
 
         pattern_atlag = Prec_train_mcK.sel(time=events_min_lag).mean(dim='time')
         pattern[idx] = pattern_atlag 
-        ts_3d = Prec_train_mcK.sel(time=dates_train_min_lag)
+        ts_3d = Prec_train_mcK.sel(time=dates_train_min_lag) 
         
         
         crosscorr = cross_correlation_patterns(ts_3d, pattern_atlag)
@@ -335,6 +335,7 @@ def train_test_wrapper(RV_ts, Prec_reg, ex):
                              ex['max_break'], ex['prec_reg_max_d'])
     subfolder = subfolder.replace(' ' ,'')
     ex['CPPA_folder'] = os.path.join(general_folder, subfolder)
+    ex['output_dic_folder'] = os.path.join(ex['figpathbase'], ex['CPPA_folder'])
     
 
     #%%
@@ -534,9 +535,6 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
     # if there are less regions that are desired, the n_strongest is lowered
     if n_regions_lag_i <= ex['n_strongest']:
         ex['upd_n_strongest'] = n_regions_lag_i
-    
-    # regions investigated to create ts timeseries
-    regions_for_ts = list(np.arange(1, n_regions_lag_i+1))
                
     
     # reshape to latlon grid
@@ -617,10 +615,29 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, npmean):
     return ts_regions_lag_i, sign_ts_regions, std_regions
 
 
+def store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex):
+
+    for n in range(len(ex['train_test_list'])):
+        ex['n'] = n
+        
+        test =ex['train_test_list'][n][1]
+        ex['test_year'] = list(set(test['RV'].time.dt.year.values))
+        
+        print('Storing timeseries using patterns retrieved '
+              'without test year(s) {}'.format(ex['test_year']))
+        
+        ds_Sem = l_ds_CPPA[n]
+        ds_mcK = l_ds_PEP[n]
+        
+        
+        store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex)
+
+    return
+
 def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
 #%%
     
-    ex['output_ts_folder'] = os.path.join(ex['folder'], 'timeseries')
+    ex['output_ts_folder'] = os.path.join(ex['output_dic_folder'], 'timeseries')
     if os.path.isdir(ex['output_ts_folder']) != True : os.makedirs(ex['output_ts_folder'])
 
     
@@ -655,8 +672,8 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         ts_3d_nw     = ts_3d_nw.where(mask==True)
 
         
-        regions_for_ts = np.arange(ds_Sem['pat_num_CPPA'].min(), ds_Sem['pat_num_CPPA'][idx].max()+1E-09)
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
+        regions_for_ts = np.unique(Regions_lag_i[~np.isnan(Regions_lag_i)])
 #        mean_n = composite_p1/ts_3d.std(dim='time')
         npmean        = composite_p1.values
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
@@ -669,10 +686,10 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
             regions_for_ts = np.delete(regions_for_ts, check_nans[1])
             ts_regions_lag_i = np.delete(ts_regions_lag_i, check_nans[1], axis=1)
             sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
-            
+        
         name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
-        spatcov_CPPA = cross_correlation_patterns(ts_3d_nw, ds_Sem['pat_num_CPPA'][idx])
-        spatcov_PEP = cross_correlation_patterns(ts_3d_nw, ds_mcK['pattern'][idx])
+        spatcov_CPPA = cross_correlation_patterns(ts_3d_nw, ds_Sem['pattern_CPPA'][idx])
+        spatcov_PEP = cross_correlation_patterns(ts_3d_n, ds_mcK['pattern'][idx])
         columns = list(regions_for_ts)
         columns.insert(0, 'spatcov_CPPA')
         columns.insert(0, 'spatcov_PEP')
@@ -1706,6 +1723,7 @@ def grouping_regions_similar_coords(l_ds, ex, grouping = 'group_accros_tests_sin
     are assigned into different clusters. If eps is too low, such an high density is required that
     it will also start to cluster together regions with similar coordinates.
     '''
+    #%%
 #    grouping = 'group_accros_tests_single_lag'
 #    grouping =  'group_across_test_and_lags'
     # Precursor Regions Dimensions
@@ -1726,18 +1744,20 @@ def grouping_regions_similar_coords(l_ds, ex, grouping = 'group_accros_tests_sin
     precursor_coordinates = []
     
     # Array Containing Precursor Region Indices for each YEAR 
-    precursor_indices = np.zeros((len(PRECURSOR_YEARS),
+    precursor_indices = np.empty((len(PRECURSOR_YEARS),
                                   len(PRECURSOR_LAGS),
                                   len(PRECURSOR_LATITUDE),
                                   len(PRECURSOR_LONGITIUDE)),
-                                 np.uint8)
-    precursor_indices_new = np.zeros_like(precursor_indices)
+                                 np.float32)
+    precursor_indices[:,:,:,:] = np.nan
+    precursor_indices_new = precursor_indices.copy()
     
     ex['uniq_regs_lag'] = np.zeros(len(PRECURSOR_LAGS))
     # Array Containing Precursor Region Weights for each YEAR and LAG
     for lag_idx, lag in enumerate(PRECURSOR_LAGS):
         
         indices_across_yrs = np.squeeze(PRECURSOR_DATA[:,lag_idx,:,:])
+        
         
         if grouping == 'group_accros_tests_single_lag':
             # regions are given same number across test set, not accross all lags
@@ -1767,17 +1787,17 @@ def grouping_regions_similar_coords(l_ds, ex, grouping = 'group_accros_tests_sin
             
             for (year_idx, lag_idx, region_idx), group in zip(precursor_coordinates_index, precursor_coordinates_group):
                 precursor_indices_new[year_idx, lag_idx, precursor_indices[year_idx, lag_idx] == region_idx] = group
-    
+
     
     if grouping == 'group_across_test_and_lags':
         # Group Similar Precursor Regions Together
         precursor_coordinates_index = np.array([index for index, coord in precursor_coordinates])
         precursor_coordinates_coord = np.array([coord for index, coord in precursor_coordinates])
-        
+
         precursor_coordinates_group = DBSCAN(eps=eps).fit_predict(precursor_coordinates_coord) + 2
         
-        precursor_indices_new = np.zeros_like(precursor_indices)
         
+        precursor_indices_new = np.zeros_like(precursor_indices)
         for (year_idx, lag_idx, region_idx), group in zip(precursor_coordinates_index, precursor_coordinates_group):
     #        print(year_idx, lag_idx, region_idx, group)
             precursor_indices_new[year_idx, lag_idx, precursor_indices[year_idx, lag_idx] == region_idx] = group
@@ -1794,8 +1814,8 @@ def grouping_regions_similar_coords(l_ds, ex, grouping = 'group_accros_tests_sin
         pattern   = single_ds['pat_num_CPPA']
         
         pattern.values = PRECURSOR_DATA[test_idx]
-        # set the rest to nan
-        pattern = pattern.where(pattern.values != 0.)
+#        # set the rest to nan
+#        pattern = pattern.where(pattern.values != 0.)
         single_ds['pat_num_CPPA_clust'] = pattern
     #    print(test_idx)
     #    plt.figure()
@@ -1807,6 +1827,7 @@ def grouping_regions_similar_coords(l_ds, ex, grouping = 'group_accros_tests_sin
     
     #plt.figure()
     ex['max_N_regs'] = np.nanmax(PRECURSOR_DATA)
+    #%%
     return l_ds_new
 
 

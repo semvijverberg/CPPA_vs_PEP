@@ -41,8 +41,8 @@ ex = dict(
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
-     'max_break'    :       1,
-     'min_dur'      :       2,
+     'max_break'    :       0,
+     'min_dur'      :       1,
      'load_mcK'     :       '0',
      'RV_name'      :       'T2mmax',
      'name'         :       'sst',
@@ -59,7 +59,7 @@ ex = dict(
      'mcKthres'     :       'mcKthres',
      'rollingmean'  :       1,
      'add_lsm'      :       False,
-     'prec_reg_max_d':      1}  # 'mcKthres'
+     'prec_reg_max_d':      0}  # 'mcKthres'
      )
 
 
@@ -113,39 +113,37 @@ n = 1
 
 
 
-l_ds_Sem, l_ds_mcK, ex = func_CPPA.main(RV_ts, Prec_reg, ex)
+l_ds_CPPA, l_ds_PEP, ex = func_CPPA.main(RV_ts, Prec_reg, ex)
 
 
 
-#%%
 
+
+output_dic_folder = ex['output_dic_folder']
 
 
 # save ex setting in text file
-folder = os.path.join(ex['figpathbase'], ex['CPPA_folder'])
-output_dic_folder = folder
-#assert (os.path.isdir(folder) != True), 'Overwrite?\n{}'.format(folder)
-if os.path.isdir(folder):
-    answer = input('Overwrite?\n{}\ntype y or n:\n\n'.format(folder))
+
+if os.path.isdir(output_dic_folder):
+    answer = input('Overwrite?\n{}\ntype y or n:\n\n'.format(output_dic_folder))
     if 'n' in answer:
-        assert (os.path.isdir(folder) != True)
+        assert (os.path.isdir(output_dic_folder) != True)
     elif 'y' in answer:
         pass
 
-if os.path.isdir(folder) != True : os.makedirs(folder)
-ex['folder'] = folder
+if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
 
 # save output in numpy dictionary
 filename = 'output_main_dic'
 if os.path.isdir(output_dic_folder) != True : os.makedirs(output_dic_folder)
 to_dict = dict( { 'ex'      :   ex,
-                 'l_ds_Sem' : l_ds_Sem,
-                 'l_ds_mcK' : l_ds_mcK} )
+                 'l_ds_CPPA' : l_ds_CPPA,
+                 'l_ds_PEP' : l_ds_PEP} )
 np.save(os.path.join(output_dic_folder, filename+'.npy'), to_dict)  
 
 # write output in textfile
-print_ex.append('folder')
-txtfile = os.path.join(folder, 'experiment_settings.txt')
+print_ex.append('output_dic_folder')
+txtfile = os.path.join(output_dic_folder, 'experiment_settings.txt')
 with open(txtfile, "w") as text_file:
     max_key_len = max([len(i) for i in print_ex])
     for key in print_ex:
@@ -166,14 +164,16 @@ func_CPPA.kornshell_with_input(args, ex)
 
 #%% Generate output in console
 
+output_dic_folder = ex['output_dic_folder']
+
 filename = 'output_main_dic'
-dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
+dic = np.load(os.path.join(output_dic_folder, filename+'.npy'),  encoding='latin1').item()
 
 # load settings
 ex = dic['ex']
 # load patterns
-l_ds_Sem = dic['l_ds_Sem']
-l_ds_mcK = dic['l_ds_mcK']
+l_ds_CPPA = dic['l_ds_CPPA']
+l_ds_PEP = dic['l_ds_PEP']
 
 # write output in textfile
 predict_folder = '{}{}_ts{}'.format(ex['pval_logit_final'], ex['logit_valid'], ex['use_ts_logit'])
@@ -194,7 +194,7 @@ with open(txtfile, "w") as text_file:
         
 
 # perform prediciton
-ex, l_ds_Sem = func_CPPA.make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex)
+ex, l_ds_CPPA = func_CPPA.make_prediction(l_ds_CPPA, l_ds_PEP, Prec_reg, ex)
 
     #%%
 # =============================================================================
@@ -229,9 +229,9 @@ for n in range(len(ex['train_test_list'])):
             patterns_mcK = patterns_mcK.sel(n_tests=slice(0,ex['n_stop']))
             ex['n_conv'] = ex['n_stop']
     
-    upd_pattern = l_ds_Sem[n]['pattern_' + name_for_ts].sel(lag=ex['lags'])
-    patterns_Sem[n,:,:,:] = upd_pattern * l_ds_Sem[n]['std_train_min_lag']
-    patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern'].sel(lag=ex['lags'])
+    upd_pattern = l_ds_CPPA[n]['pattern_' + name_for_ts].sel(lag=ex['lags'])
+    patterns_Sem[n,:,:,:] = upd_pattern * l_ds_CPPA[n]['std_train_min_lag']
+    patterns_mcK[n,:,:,:] = l_ds_PEP[n]['pattern'].sel(lag=ex['lags'])
 
 score_mcK       = np.round(ex['score_per_run'][-1][2], 2)
 score_Sem       = np.round(ex['score_per_run'][-1][3], 2)
@@ -278,7 +278,7 @@ if ex['leave_n_out']:
     years = range(ex['startyear'], ex['endyear'])
     for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
         yr = years[n]
-        pattern_num_init = l_ds_Sem[n]['pat_num_CPPA'].sel(lag=ex['lags'])
+        pattern_num_init = l_ds_CPPA[n]['pat_num_CPPA'].sel(lag=ex['lags'])
         
 
 
@@ -296,7 +296,7 @@ if ex['leave_n_out']:
         func_CPPA.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
         
 #        if ex['logit_valid'] == True:
-#            pattern_num = l_ds_Sem[n]['pat_num_logit']
+#            pattern_num = l_ds_CPPA[n]['pat_num_logit']
 #            pattern_num.attrs['title'] = ('{} - regions that were kept after logit regression '
 #                                         'pval < {}'.format(yr, ex['pval_logit_final']))
 #            filename = os.path.join(subfolder, pattern_num.attrs['title'].replace(
@@ -323,8 +323,8 @@ if ex['leave_n_out']:
 #filename = 'output_main_dic'
 #dic = np.load(os.path.join(output_dic_folder,filename+'.npy'),  encoding='latin1').item()
 #ex = dic['ex']
-#l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-#l_ds_Sem        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
+#l_ds_PEP        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+#l_ds_CPPA        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
 #
 #ex['use_ts_logit']=False
 #
@@ -334,7 +334,7 @@ if ex['leave_n_out']:
 #if os.path.isdir(predict_folder) != True : os.makedirs(predict_folder)
 #
 #
-#ex, patterns_Sem, patterns_mcK = func_pred.make_prediction(l_ds_Sem, l_ds_mcK, Prec_reg, ex)
+#ex, patterns_Sem, patterns_mcK = func_pred.make_prediction(l_ds_CPPA, l_ds_PEP, Prec_reg, ex)
 #
 #
 #
@@ -345,8 +345,8 @@ if ex['leave_n_out']:
 #
 ##%%
 #events_per_year = [ex['score_per_run'][i][1] for i in range(len(ex['score_per_run']))]
-#l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-#l_ds_Sem        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
+#l_ds_PEP        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+#l_ds_CPPA        = [ex['score_per_run'][i][3] for i in range(len(ex['score_per_run']))]
 #ran_ROCS        = [ex['score_per_run'][i][4] for i in range(len(ex['score_per_run']))]
 #score_mcK       = np.round(ex['score_per_run'][-1][2]['score'], 2)
 #score_Sem       = np.round(ex['score_per_run'][-1][3]['score'], 2)
@@ -404,7 +404,7 @@ if ex['leave_n_out']:
 ##test_set_to_plot = list(np.arange(0,ex['n_conv'],5))
 #for yr in test_set_to_plot: 
 #    n = test_set_to_plot.index(yr)
-#    Robustness_weights = l_ds_Sem[n]['weights']
+#    Robustness_weights = l_ds_CPPA[n]['weights']
 #    size_trainset = ex['n_yrs'] - ex['leave_n_years_out']
 #    Robustness_weights.attrs['title'] = ('Robustness\n test yr(s): {}, single '
 #                            'training set (n={} yrs)'.format(yr,size_trainset))
@@ -450,7 +450,7 @@ if ex['leave_n_out']:
 #                dims=['n_tests', 'lag','latitude','longitude'], 
 #                name='{}_tests_wghts'.format(ex['n_conv']), attrs={'units':'wghts ['})
 #for n in range(ex['n_conv']):
-#    wgts_tests[n,:,:,:] = l_ds_Sem[n]['weights']
+#    wgts_tests[n,:,:,:] = l_ds_CPPA[n]['weights']
 #    
 #    
 #if ex['leave_n_out']:
@@ -530,7 +530,7 @@ if ex['leave_n_out']:
 #    years = range(ex['startyear'], ex['endyear'])
 #    for n in np.arange(0, ex['n_conv'], 6, dtype=int): 
 #        yr = years[n]
-#        pattern_num_init = l_ds_Sem[n]['pat_num_CPPA']
+#        pattern_num_init = l_ds_CPPA[n]['pat_num_CPPA']
 #        
 #
 #
@@ -547,7 +547,7 @@ if ex['leave_n_out']:
 #        func_mcK.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
 #        
 #        if ex['logit_valid'] == True:
-#            pattern_num = l_ds_Sem[n]['pat_num_logit']
+#            pattern_num = l_ds_CPPA[n]['pat_num_logit']
 #            pattern_num.attrs['title'] = ('{} - regions that were kept after logit regression '
 #                                         'pval < {}'.format(yr, ex['pval_logit_final']))
 #            filename = os.path.join(subfolder, pattern_num.attrs['title'].replace(
@@ -619,15 +619,15 @@ if ex['leave_n_out']:
 #    
 #    
 #    
-##l_ds_mcK        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
-##lats = l_ds_mcK[0]['pattern'].latitude
-##lons = l_ds_mcK[0]['pattern'].longitude
+##l_ds_PEP        = [ex['score_per_run'][i][2] for i in range(len(ex['score_per_run']))]
+##lats = l_ds_PEP[0]['pattern'].latitude
+##lons = l_ds_PEP[0]['pattern'].longitude
 ##array = np.zeros( (ex['n_conv'], len(ex['lags']), len(lats), len(lons)) )
 ##patterns_mcK = xr.DataArray(data=array, coords=[range(ex['n_conv']), ex['lags'], lats, lons], 
 ##                          dims=['n_tests', 'lag','latitude','longitude'], 
 ##                          name='{}_tests_patterns_mcK'.format(ex['n_conv']), attrs={'units':'Kelvin'})
 ##for n in range(ex['n_conv']):
-##    patterns_mcK[n,:,:,:] = l_ds_mcK[n]['pattern']
+##    patterns_mcK[n,:,:,:] = l_ds_PEP[n]['pattern']
 #
 #
 ##filename = 'only_patterns_and_weights'

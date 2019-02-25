@@ -15,7 +15,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
+def ROC_score_wrapper_old(test, train, ds_mcK, ds_Sem, ex):
     #%%
     # =============================================================================
     # calc ROC scores
@@ -174,6 +174,44 @@ def ROC_score_wrapper(test, train, ds_mcK, ds_Sem, ex):
     ex['score_per_run'].append([test_year, len(test['events']), ROC_mcK, ROC_Sem, ROC_boot])
     return ex
 
+
+def ROC_score_wrapper(ex):
+    #%%
+    ROC_Sem  = np.zeros(len(ex['lags']))
+    ROC_mcK  = np.zeros(len(ex['lags']))
+    ROC_boot = np.zeros(len(ex['lags']))
+    for lag_idx, lag in enumerate(ex['lags']):
+        if lag_idx == 0:
+            print('Calculating ROC scores\nDatapoints precursor length '
+              '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),
+               len(ex['test_RV'][0])))
+            
+        ts_pred_mcK  = ((ex['test_ts_mcK'][lag_idx]-np.mean(ex['test_ts_mcK'][lag_idx]))/ \
+                                  (np.std(ex['test_ts_mcK'][lag_idx]) ) )
+        ts_pred_Sem  = ((ex['test_ts_Sem'][lag_idx]-np.mean(ex['test_ts_Sem'][lag_idx]))/ \
+                                  (np.std(ex['test_ts_Sem'][lag_idx]) ) )                 
+
+#                func_CPPA.plot_events_validation(ex['test_ts_Sem'][idx], ex['test_ts_mcK'][idx], test['RV'], Prec_threshold_Sem, 
+#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
+        
+        n_boot = 10
+        ROC_mcK[lag_idx], ROC_boot = ROC_score(ts_pred_mcK, ex['test_RV'][lag_idx],
+                              ex['hotdaythres'], lag, n_boot, ex, 'default')
+        if ex['use_ts_logit'] == True:
+            ROC_Sem[lag_idx] = ROC_score(ts_pred_Sem, ex['test_RV'][lag_idx],
+                              ex['hotdaythres'], lag, 0, ex, 'default')[0]
+        elif ex['use_ts_logit'] == False:
+            ROC_Sem[lag_idx] = ROC_score(ex['test_ts_Sem'][lag_idx], ex['test_RV'][lag_idx],
+                              ex['hotdaythres'], lag, 0, ex, 'default')[0]
+        
+        print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+        '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
+          lag, ROC_mcK[lag_idx], ROC_Sem[lag_idx], 2*np.std(ROC_boot)))
+        
+        
+    ex['score_per_run'].append([ROC_mcK, ROC_Sem, ROC_boot])
+    #%%
+    return ex
 
 
 def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='default'):
