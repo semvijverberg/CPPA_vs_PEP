@@ -653,31 +653,35 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         dates_lag = dates_min_lag[noleapdays].dropna(dim='time', how='all')
         # also kick out the corresponding events
         dates = dates[noleapdays].dropna(dim='time', how='all')
-     
-        
-        
         np.warnings.filterwarnings('ignore')
+        
+        
+        
         mask_regions = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
         # Make time series for whole period
 #        Prec_trainsel = Prec_reg.isel(time=train['Prec_train_idx'])
         # actor/precursor full 3d timeseries at RV period minus lag, normalized over std within dates_train_min_lag
-        ts_3d_n = Prec_reg.sel(time=dates_lag)/ds_Sem['std_train_min_lag'][idx]
-        
-        # ts_3d is given more weight to robust precursor regions
-        ts_3d_nw = ts_3d_n  * ds_Sem['weights'].sel(lag=lag)
-        mask_notnan = (np.product(np.isnan(ts_3d_nw.values),axis=0)==False) # nans == False
+        ts_3d    = Prec_reg.sel(time=dates_lag)
+        mask_notnan = (np.product(np.isnan(ts_3d.values),axis=0)==False) # nans == False
         mask = mask_notnan * mask_regions
-        # normal mean of extracted regions
-        composite_p1 = ds_Sem['pattern_CPPA'].sel(lag=lag).where(mask==True)
-        ts_3d_nw     = ts_3d_nw.where(mask==True)
+        ts_3d     = ts_3d.where(mask==True)
+        # ts_3d is given more weight to robust precursor regions
+        ts_3d_w  = ts_3d  * ds_Sem['weights'].sel(lag=lag)
+#        ts_3d_nw = ts_3d_w / ds_Sem['std_train_min_lag'][idx]
 
+        
+        
+
+        pattern_CPPA = ds_Sem['pattern_CPPA'].sel(lag=lag)
+        CPPA_w = pattern_CPPA * ds_Sem['weights'].sel(lag=lag)
+#        CPPA_nw = CPPA_w / ds_Sem['std_train_min_lag'][idx]
+        
         
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
         regions_for_ts = np.unique(Regions_lag_i[~np.isnan(Regions_lag_i)])
-#        mean_n = composite_p1/ts_3d.std(dim='time')
-        npmean        = composite_p1.values
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                regions_for_ts, ts_3d_nw, npmean)[:2]
+                                regions_for_ts, ts_3d_w, CPPA_w.values)[:2]
+        
         check_nans = np.where(np.isnan(ts_regions_lag_i))
         if check_nans[0].size != 0:
             print('{} nans found in time series of region {}, dropping this region.'.format(
@@ -688,7 +692,7 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
             sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
         
         name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
-        spatcov_CPPA = cross_correlation_patterns(ts_3d_nw, ds_Sem['pattern_CPPA'][idx])
+        spatcov_CPPA = cross_correlation_patterns(ts_3d_w, CPPA_w)
         ts_3d_PEP = find_region(Prec_reg.sel(time=dates_lag), region=ex['regionmcK'])[0]
         var_patt_PEP = find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
         spatcov_PEP = cross_correlation_patterns(ts_3d_PEP, var_patt_PEP)

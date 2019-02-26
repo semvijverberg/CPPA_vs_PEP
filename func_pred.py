@@ -128,7 +128,7 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
             csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
             path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
             data = pd.read_csv(path)
-            regions_for_ts = [int(r[0]) for r in data.columns[3:].values]
+            regions_for_ts = [int(r[:-2]) for r in data.columns[3:].values]
             ts_regions_lag_i = data.iloc[:,3:].values
             
             # only training dataset
@@ -149,9 +149,8 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
             Composite_lag = Composite[lag_idx]
             
             upd_regions = np.zeros(Regions_lag_i.shape)
-            for i in range(len(regions_kept)):
-                reg = regions_kept[i]
-                upd_regions[Regions_lag_i == reg] =  i+1
+            for reg in regions_kept:
+                upd_regions[Regions_lag_i == reg] =  reg
         
             # create map of precursor regions
             npmap = np.ma.reshape(upd_regions, (len(lats), len(lons)))
@@ -175,6 +174,9 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
             ts_regions_test = ts_regions_lag_i[test_yrs,:]
 
             ts_regions_lag_i = ts_regions_test[:,:] * sign_ts_regions[None,:]
+            # use only regions which were not kicked out by logit valid
+            idx_regions_kept = [regions_for_ts.index(r) for r in regions_kept]
+            ts_regions_lag_i = ts_regions_lag_i[:,idx_regions_kept]
             # normalize time series (as done in the training)        
             X_n = ts_regions_lag_i / ex['ts_train_std'][lag_idx]
             
@@ -323,10 +325,10 @@ def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, bina
             weak_p = []
             for c in comb_int:
                 idx_f = np.where(np.array(c) == 1)[0]
-                # add 1 to get number of region
-                idx_f += 1
-                for i in regs_for_interac:
-                    if i in list(idx_f):   
+                # get number of region
+                regs = [regions[i] for i in idx_f]
+                for r in regs_for_interac:
+                    if r in regs:   
         #                print(True)
                         weak_p.append(c) 
             
@@ -348,7 +350,8 @@ def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, bina
                 idx_f = np.where(np.array(comb) == 1)[0]
                 two_ts = X_train_cl[:,idx_f]
                 ts_regions_interaction[:,i] = two_ts[:,0] * two_ts[:,1]
-                combregions.append(idx_f+1)
+                corresponding_regions = [regions[i] for i in idx_f]
+                combregions.append(corresponding_regions)
             
             X_inter = ts_regions_interaction / np.std(ts_regions_interaction, axis=0)
             y_train = y
@@ -373,9 +376,9 @@ def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, bina
                 # =============================================================================
                 
                 keep_duetointer = []
-                comb_sign_r = set(cregions_sign.flatten())
+                comb_sign_r = np.unique(cregions_sign)
                 comb_sign_ind = [i for i in comb_sign_r if i not in regs_for_interac]
-                comb_sign_ind_idx = [i-1 for i in comb_sign_ind if i in regions]
+                comb_sign_ind_idx = [comb_sign_ind.index(r) for r in comb_sign_ind if r in regions]
                 X_invol_inter = X_init
                 X_invol_inter = X_invol_inter * sign_ts_regions[None,:]
                 X_invol_inter = X_invol_inter[:,comb_sign_ind_idx]
@@ -427,22 +430,22 @@ def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, bina
                 # delete regions that are not kept after testing if they got good enough
                 # p_vals
                 flat_keeping = list(set([item for sublist in keep_duetointer for item in sublist]))
-                idx_not_keeping = [i for i in reg_investigated if i not in flat_keeping]
+                idx_not_keeping = [list(track_r_kept).index(r) for r in reg_investigated if r not in flat_keeping]
                 track_r_kept    = np.delete(track_r_kept, idx_not_keeping)
             
-                # if it adds likelihood when reg_investiged interacts with reg_single, 
-                # then I keep both reg_investiged and reg_single in as single predictors
-                # if two reg_investigated became significant together, then I will keep 
-                # them in as an 'interacting time series' reg1 * reg2 = predictor.
-                if (regs_for_interac in keep_duetointer) and len(regs_for_interac)==2:
-                    add_pred_inter = [i for i in keep_duetointer if all(np.equal(i, regs_for_interac))][0]
-                    idx_pred_inter = [i for i in range(n_feat) if regions[i] in add_pred_inter]
-                    ts_inter_kept   = ts_regions_train[:,idx_pred_inter[0]] * ts_regions_train[:,idx_pred_inter[1]]
-                    X_inter_kept = ts_inter_kept[:,None] / np.std(ts_inter_kept[:,None], axis = 0)
-    #            
-    #                X_final = np.concatenate( (X_train, X_inter_kept), axis=1)
-    #            else:
-    #                X_final = X_train
+#                # if it adds likelihood when reg_investiged interacts with reg_single, 
+#                # then I keep both reg_investiged and reg_single in as single predictors
+#                # if two reg_investigated became significant together, then I will keep 
+#                # them in as an 'interacting time series' reg1 * reg2 = predictor.
+#                if (regs_for_interac in keep_duetointer) and len(regs_for_interac)==2:
+#                    add_pred_inter = [i for i in keep_duetointer if all(np.equal(i, regs_for_interac))][0]
+#                    idx_pred_inter = [i for i in range(n_feat) if regions[i] in add_pred_inter]
+#                    ts_inter_kept   = ts_regions_train[:,idx_pred_inter[0]] * ts_regions_train[:,idx_pred_inter[1]]
+#                    X_inter_kept = ts_inter_kept[:,None] / np.std(ts_inter_kept[:,None], axis = 0)
+#    #            
+#    #                X_final = np.concatenate( (X_train, X_inter_kept), axis=1)
+#    #            else:
+#    #                X_final = X_train
     # =============================================================================
     # Step 3 Perform log regression on (individual) ex['ts_train_std']that past step 1 & 2.
     # =============================================================================

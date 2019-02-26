@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import multiprocessing as mp
 import time
 from ROC_score import plotting_timeseries
+xarray_plot = func_CPPA.xarray_plot
 
 #output_dic_folder = '/Users/semvijverberg/surfdrive/McKinRepl/T2mmax_sst_Northern_PEPrectangle/random90_leave_5_out_1979_2017_tf1_lags[0,5,10,15,20,30,40,50]_mcKthresp_2.5deg_60nyr_95tperc_0.8tc_1rm_2019-02-05'
 
@@ -160,10 +161,10 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         patterns_Sem[n,:,:,:] = upd_pattern * l_ds_CPPA[n]['std_train_min_lag']
         patterns_mcK[n,:,:,:] = l_ds_PEP[n]['pattern'].sel(lag=ex['lags'])
     
-    score_mcK       = np.round(ex['score_per_run'][-1][0], 2)
-    score_Sem       = np.round(ex['score_per_run'][-1][1], 2)
-    ROC_str_mcK      = ['{} days - ROC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
-    ROC_str_Sem      = ['{} days - ROC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
+    score_mcK       = np.round(ex['score'][-1][0], 2)
+    score_Sem       = np.round(ex['score'][-1][1], 2)
+    ROC_str_mcK      = ['{} days - AUC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
+    ROC_str_Sem      = ['{} days - AUC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
     # Sem plot 
     # share kwargs with mcKinnon plot
     
@@ -247,8 +248,8 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         dicRV = np.load(filename,  encoding='latin1').item()
         folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
         xarray_plot(dicRV['RV_array']['mask'], path=folder, name='RV_mask', saving=True)
-    
-    func_CPPA.plot_oneyr_events(RV_ts, ex, 2012, ex['folder'], saving=True)
+        
+    func_CPPA.plot_oneyr_events(RV_ts, ex, 2012, ex['output_dic_folder'], saving=True)
     ## plotting same figure as in paper
     #for i in range(2005, 2010):
     #    func_CPPA.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
@@ -335,7 +336,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     
     #%% Initial regions from only composite extraction:
     
-    lags = ex['lags'][::2]
+#    lags = ex['lags'][::2]
     if ex['leave_n_out']:
         subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
         total_folder = os.path.join(ex['figpathbase'], subfolder)

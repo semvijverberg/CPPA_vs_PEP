@@ -177,6 +177,7 @@ def ROC_score_wrapper_old(test, train, ds_mcK, ds_Sem, ex):
 
 def ROC_score_wrapper(ex):
     #%%
+    ex['score'] = []
     ROC_Sem  = np.zeros(len(ex['lags']))
     ROC_mcK  = np.zeros(len(ex['lags']))
     ROC_boot = np.zeros(len(ex['lags']))
@@ -209,7 +210,7 @@ def ROC_score_wrapper(ex):
           lag, ROC_mcK[lag_idx], ROC_Sem[lag_idx], 2*np.std(ROC_boot)))
         
         
-    ex['score_per_run'].append([ROC_mcK, ROC_Sem, ROC_boot])
+    ex['score'].append([ROC_mcK, ROC_Sem, ROC_boot])
     #%%
     return ex
 
