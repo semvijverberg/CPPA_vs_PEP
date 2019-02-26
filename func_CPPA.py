@@ -664,7 +664,7 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         ts_3d_n = Prec_reg.sel(time=dates_lag)/ds_Sem['std_train_min_lag'][idx]
         
         # ts_3d is given more weight to robust precursor regions
-        ts_3d_nw = ts_3d_n * ds_Sem['weights'].sel(lag=lag)
+        ts_3d_nw = ts_3d_n  * ds_Sem['weights'].sel(lag=lag)
         mask_notnan = (np.product(np.isnan(ts_3d_nw.values),axis=0)==False) # nans == False
         mask = mask_notnan * mask_regions
         # normal mean of extracted regions
@@ -689,7 +689,9 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         
         name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
         spatcov_CPPA = cross_correlation_patterns(ts_3d_nw, ds_Sem['pattern_CPPA'][idx])
-        spatcov_PEP = cross_correlation_patterns(ts_3d_n, ds_mcK['pattern'][idx])
+        ts_3d_PEP = find_region(Prec_reg.sel(time=dates_lag), region=ex['regionmcK'])[0]
+        var_patt_PEP = find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
+        spatcov_PEP = cross_correlation_patterns(ts_3d_PEP, var_patt_PEP)
         columns = list(regions_for_ts)
         columns.insert(0, 'spatcov_CPPA')
         columns.insert(0, 'spatcov_PEP')

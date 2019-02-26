@@ -91,7 +91,7 @@ def ROC_score_wrapper_old(test, train, ds_mcK, ds_Sem, ex):
                     ROC_Sem[idx] = ROC_score(ex['test_ts_Sem'][idx], ex['test_RV'][idx],
                                       ex['hotdaythres'], lag, 0, ex, 'default')[0]
                 
-                print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
+                print('\n*** AUC for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
             
