@@ -10,54 +10,196 @@ import xarray as xr
 import numpy as np
 import pandas as pd
 import func_CPPA
+import statsmodels.api as sm
+import itertools
+import scipy as sp
+import seaborn as sns
+import matplotlib.pyplot as plt
 
+def get_opt_freq(RV_ts, ex):
+    #%%                 
+    
+#    for n in range(len(ex['train_test_list'])):
+#        ex['n'] = n
+#        
+#        train, test = ex['train_test_list'][n]
+#        ex['test_year'] = list(set(test['RV'].time.dt.year.values))
+#        if ex['use_ts_logit'] == False:
+#            print('test year(s) {}, with {} events.'.format(ex['test_year'],
+#                                 test['events'].size))
+        
+    # get RV dates (period analyzed)
+    all_RV_dates = func_CPPA.to_datesmcK(RV_ts.time, RV_ts.time.dt.hour[0], 
+                                       RV_ts.time[0].dt.hour)
+    
+    for lag_idx, lag in enumerate(ex['lags']):
+        # load in timeseries
+        csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
+        path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
+        data = pd.read_csv(path, index_col='date')
+        
+        ### only test data ###
+        dates_test_lag = func_dates_min_lag(all_RV_dates, lag)[0]
+        
+        data_RVdates = data.loc[dates_test_lag]
+        regs = data_RVdates.columns
+        dfRV = pd.DataFrame(RV_ts.sel(time=all_RV_dates).values, index=data_RVdates.index,
+                            columns=['RVts'])
+                         
+        dfRV = (dfRV - dfRV.mean()) / dfRV.std()
+        data_n = (data_RVdates-data_RVdates.mean(axis=0)) / data_RVdates.std(axis=0)
+        data_n['RVts'] = dfRV
+        
+#        data_n_abs = data_n[data_n.columns[:]].abs()
+        
+#        #interaction ts excluding autocorrelation
+#        for reg in regs:
+#            data_n_abs[reg] = subtr_AR(data_n_abs[reg], 1)
+#        dfRV = subtr_AR(dfRV, 1)
+        
+#        data_i = data_n_abs.multiply(dfRV, axis='index')
+#        data_i.columns = [c + '_i' for c in data_i.columns]
+#        df_both = pd.concat([data_n, data_i], axis=1)
 
+        
+#        for reg in regs:
+#            plt.figure()
+#            n_days = 20
+##            df_both[one_yr][[reg, reg+'_i', 'RVts']].plot()
+##            data_i_n[one_yr][['RVts']].plot()
+#            plt.plot(autocorrelation(data_i[reg+'_i'])[:n_days])
+#            plt.plot(autocorrelation(data_n_abs[reg])[:n_days])
+#            plt.plot(autocorrelation(dfRV)[:n_days])
+##            data_n_subAR = subtr_AR(data_n, reg, 1)
+##            plt.plot(autocorrelation(data_n_subAR)[:n_days])
+#            dfRV_subAR = subtr_AR(data_n[reg])
+#            plt.plot(autocorrelation(dfRV_subAR)[:n_days])
+        
+        one_yr = pd.to_datetime(data_n.index).year == 2012
+        N_days = one_yr[one_yr==True].size
+        freq = 1./N_days
+        df_out = fft_powerspectrum2(data_n, freq, 60)
 
+        subplots_df(df_out, 3)
+        
+#        one_yr = pd.to_datetime(data_n.index).year == 2012
+#        N_days = one_yr[one_yr==True].size
+#        freq = 1./N_days
+#        df_out = fft_powerspectrum2(dfRV, freq, 60)
+#
+#        subplots_df(df_out, 1)
+            
+    #%%
+def subtr_AR(df):
+    from statsmodels.tsa.ar_model import AR
+    AR_model = AR(df.values).fit(ic='bic')
+    opt_lag = AR_model.X.shape[1]
+    return df - AR_model.predict(opt_lag, df.size+opt_lag-1)
 
+def autocorrelation(x):
+    xp = (x - np.mean(x))/np.std(x)
+    result = np.correlate(xp, xp, mode='full')
+    return result[int(result.size/2):]/(len(xp))
+
+def fft_np(y, freq):
+    yfft = sp.fftpack.fft(y)
+    ypsd = np.abs(yfft)**2
+    fftfreq = sp.fftpack.fftfreq(len(ypsd), freq)
+    i = fftfreq > 0
+    y = 2.0/len(y) * ypsd[i]
+    x = fftfreq[i]
+    return x, y
+
+def fft_powerspectrum2(df, freq, max_freq_stored):
+    
+    df_out = df[:max_freq_stored].copy()
+    
+    list_freq = []
+    for reg in df.columns:
+#        N = df.shape[0]
+#        xf = np.linspace(0.0, N*1, N+1)
+        fftfreq, yfft = fft_np(df[reg], freq)
+        
+        
+        df_out[reg] = yfft[:max_freq_stored]
+        df_out.index = fftfreq[:max_freq_stored]
+        idx = np.argmax(yfft)
+        text = '{} fft {:.1f}, freq {:.0f}'.format(
+                reg,
+                fftfreq[idx], 
+                fftfreq[idx]/freq)
+        list_freq.append(text)
+    df_out.columns = list_freq
+    return df_out
+
+def fft_powerspectrum(df, max_freq_stored):
+    df_out = df[:max_freq_stored].copy()
+    df_out.index = np.arange(1, max_freq_stored+1)
+    list_freq = []
+    for reg in df.columns:
+        N = df.shape[0]
+        xf = np.linspace(0.0, N*1, N+1)
+        yf = sp.fftpack.fft(df[reg])
+        y = 2.0/N * np.abs(yf[0:N//2])
+        df_out[reg] = y[:max_freq_stored]
+        list_freq.append('{} max on {} days'.format(
+                reg, int(xf[np.where(y == np.max(y))[0]][0])))
+    df_out.columns = list_freq
+    return df_out
+
+def subplots_df(df, colwrap):
+    if (df.columns.size) % colwrap == 0:
+        rows = int(df.columns.size / colwrap)
+    elif (df.columns.size) % colwrap != 0:
+        rows = int(df.columns.size / colwrap) + 1
+    fig, ax = plt.subplots(rows, colwrap, sharex='col', sharey='row',
+                           figsize = (10,8))
+    for i, ax in enumerate(fig.axes):
+        if i == df.columns.size:
+            ax.axis('off')
+            break
+        header = df.columns[i]
+        ax.plot(df.index, df[header])
+        ax.text(0.5, 0.9, header, horizontalalignment='center',
+                verticalalignment='center', transform=ax.transAxes)
+    return
 
 def spatial_cov(RV_ts, ex):
-    
+    #%%
     ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
     ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
     ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
     
     if ex['use_ts_logit'] == False:
         ex['test_ts_Sem'] = np.zeros( len(ex['lags']) , dtype=list)
-
-    
-#    # Event time series 
-#    events = func_CPPA.Ev_timeseries(RV_ts, ex['hotdaythres'], ex).time
-#    dates = pd.to_datetime(RV_ts.time.values)
-#    event_idx = [list(dates.values).index(E) for E in events.values]
-#    binary_events = np.zeros(dates.size)   
-#    binary_events[event_idx] = 1
-#    mask_events = np.array(binary_events, dtype=bool)
     
     
     for n in range(len(ex['train_test_list'])):
         ex['n'] = n
         
-        test =ex['train_test_list'][n][1]
+        test = ex['train_test_list'][n][1]
         ex['test_year'] = list(set(test['RV'].time.dt.year.values))
-        print('test year(s) {}, with {} events.'.format(ex['test_year'],
+        if ex['use_ts_logit'] == False:
+            print('test year(s) {}, with {} events.'.format(ex['test_year'],
                                  test['events'].size))
         
-        
+        # get RV dates (period analyzed)
+        dates_test = func_CPPA.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+                                           test['RV'].time[0].dt.hour)
         
         for lag_idx, lag in enumerate(ex['lags']):
             # load in timeseries
             csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
             path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
-            data = pd.read_csv(path)
+            data = pd.read_csv(path, index_col='date')
             
-            # only training dataset
-            all_yrs = list(pd.to_datetime(data.date.values))
-            test_yrs = [all_yrs.index(d) for d in all_yrs if d.year in ex['test_year']]
+            ### only test data ###
+            dates_test_lag = func_dates_min_lag(dates_test, lag)[0]
             
             idx = lag_idx
             if ex['use_ts_logit'] == False:
                 # spatial covariance CPPA
-                spat_cov_lag_i = data['spatcov_CPPA'][test_yrs]
+                spat_cov_lag_i = data.loc[dates_test_lag]['spatcov_CPPA']
                 
             
                 if ex['n'] == 0:
@@ -67,7 +209,7 @@ def spatial_cov(RV_ts, ex):
                     ex['test_ts_Sem'][idx] = np.concatenate( [ex['test_ts_Sem'][idx], spat_cov_lag_i.values] ) 
             
             # spatial covariance PEP
-            spat_cov_lag_i = data['spatcov_PEP'][test_yrs]
+            spat_cov_lag_i = data.loc[dates_test_lag]['spatcov_PEP']
 
             if ex['n'] == 0:
                 ex['test_ts_mcK'][idx] = spat_cov_lag_i.values
@@ -78,10 +220,33 @@ def spatial_cov(RV_ts, ex):
                 ex['test_ts_mcK'][idx] = np.concatenate( [ex['test_ts_mcK'][idx], spat_cov_lag_i.values] )
                 ex['test_RV'][idx]     = np.concatenate( [ex['test_RV'][idx], test['RV'].values] )  
                 ex['test_yrs'][idx]    = np.concatenate( [ex['test_yrs'][idx], test['RV'].time] )  
-
+    #%%
     return ex
 
 
+def func_dates_min_lag(dates, lag):
+    dates_min_lag = pd.to_datetime(dates.values) - pd.Timedelta(int(lag), unit='d')
+    ### exlude leap days from dates_train_min_lag ###
+
+
+    # ensure that everything before the leap day is shifted one day back in time 
+    # years with leapdays now have a day less, thus everything before
+    # the leapday should be extended back in time by 1 day.
+    mask_lpyrfeb = np.logical_and(dates_min_lag.month == 2, 
+                                         dates_min_lag.is_leap_year
+                                         )
+    mask_lpyrjan = np.logical_and(dates_min_lag.month == 1, 
+                                         dates_min_lag.is_leap_year
+                                         )
+    mask_ = np.logical_or(mask_lpyrfeb, mask_lpyrjan)
+    new_dates = np.array(dates_min_lag)
+    new_dates[mask_] = dates_min_lag[mask_] - pd.Timedelta(1, unit='d')
+    dates_min_lag = pd.to_datetime(new_dates)   
+    # to be able to select date in pandas dataframe
+    dates_min_lag_str = [d.strftime('%Y-%m-%d %H:%M:%S') for d in dates_min_lag]                                         
+    return dates_min_lag_str, dates_min_lag
+    
+    
 def logit_fit_new(l_ds_CPPA, RV_ts, ex):
     #%%
     if (
@@ -93,23 +258,30 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
         ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
         ex['test_yrs'] = np.zeros( len(ex['lags']) , dtype=list)
     
-    # Event time series 
-    events = func_CPPA.Ev_timeseries(RV_ts, ex['hotdaythres'], ex).time
-    dates = pd.to_datetime(RV_ts.time.values)
-    event_idx = [list(dates.values).index(E) for E in events.values]
-    binary_events = np.zeros(dates.size)   
-    binary_events[event_idx] = 1
-    mask_events = np.array(binary_events, dtype=bool)
-    
-    
+
+    def events_(RV_ts, ex):
+        events = func_CPPA.Ev_timeseries(RV_ts, ex['hotdaythres'], ex).time
+        dates = pd.to_datetime(RV_ts.time.values)
+        event_idx = [list(dates.values).index(E) for E in events.values]
+        binary_events = np.zeros(dates.size)   
+        binary_events[event_idx] = 1
+        mask_events = np.array(binary_events, dtype=bool)
+        return binary_events, mask_events
     
     for n in range(len(ex['train_test_list'])):
         ex['n'] = n
         
-        test =ex['train_test_list'][n][1]
+        train, test = ex['train_test_list'][n][0], ex['train_test_list'][n][1]
         ex['test_year'] = list(set(test['RV'].time.dt.year.values))
         print('test year(s) {}, with {} events.'.format(ex['test_year'],
                                  test['events'].size))
+        
+        # get RV dates (period analyzed)
+        dates_test = func_CPPA.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
+                                           test['RV'].time[0].dt.hour)
+        dates_train = func_CPPA.to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
+                                           train['RV'].time[0].dt.hour)
+
         
         ds_Sem = l_ds_CPPA[n]
         Composite = ds_Sem['pattern_CPPA']
@@ -127,17 +299,15 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
             # load in timeseries
             csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
             path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
-            data = pd.read_csv(path)
+            data = pd.read_csv(path, index_col='date')
             regions_for_ts = [int(r[:-2]) for r in data.columns[3:].values]
-            ts_regions_lag_i = data.iloc[:,3:].values
             
-            # only training dataset
-            all_yrs = list(pd.to_datetime(data.date.values))
-            train_yrs = [all_yrs.index(d) for d in all_yrs if d.year not in ex['test_year']]
-            ts_regions_train = ts_regions_lag_i[train_yrs,:]
-            mask_events_train = mask_events[train_yrs]
-            sign_ts_regions = np.sign(np.mean(ts_regions_train[mask_events_train],axis=0))
-            binary_train = binary_events[train_yrs]
+            ### only training data ###
+            binary_train, mask_events = events_(train['RV'], ex)
+            dates_train_lag = func_dates_min_lag(dates_train, lag)[0]
+            ts_regions_train = data.loc[dates_train_lag].iloc[:,3:].values
+            sign_ts_regions = np.sign(np.mean(ts_regions_train,axis=0))
+            
             
             # Perform training
             odds, regions_kept, combs_kept, logitmodel = train_weights_LogReg(
@@ -169,9 +339,11 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
         #    plt.figure()
         #    xrnpmap.plot.contourf(cmap=plt.cm.tab10)
                 
-            # calculating test year
-            test_yrs = [all_yrs.index(d) for d in all_yrs if d.year in ex['test_year']]
-            ts_regions_test = ts_regions_lag_i[test_yrs,:]
+            ### only test data ###
+            binary_test, mask_events = events_(test['RV'], ex)
+            dates_test_lag = func_dates_min_lag(dates_test, lag)[0]
+            ts_regions_test = data.loc[dates_test_lag].iloc[:,3:].values
+
 
             ts_regions_lag_i = ts_regions_test[:,:] * sign_ts_regions[None,:]
             # use only regions which were not kicked out by logit valid
@@ -218,12 +390,13 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
 
 
 
+
+
+
 def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, binary_train, ex):
     #%%
 #    from sklearn.linear_model import LogisticRegression
 #    from sklearn.model_selection import train_test_split
-    import statsmodels.api as sm
-    import itertools
     # I want to the importance of each regions as is shown in the composite plot
     # A region will increase the probability of the events when it the coef_ is 
     # higher then 1. This means that if the ts shows high values, we have a higher 

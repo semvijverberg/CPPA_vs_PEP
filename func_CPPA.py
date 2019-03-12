@@ -80,7 +80,7 @@ def load_data(ex):
         ex['mcKthres'] = '{}'.format(percentile)
     
     # Load in external ncdf
-    filename = '{}_1979-2017_2mar_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+    filename = '{}_1979-2017_1mar_31dec_dt-1days_{}deg.nc'.format(ex['name'],
                 ex['grid_res'])
     #filename_precur = 'sm2_1979-2017_2jan_31okt_dt-1days_{}deg.nc'.format(ex['grid_res'])
     #path = os.path.join(ex['path_raw'], 'tmpfiles')
@@ -616,7 +616,7 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, npmean):
 
 
 def store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex):
-
+    #%%
     for n in range(len(ex['train_test_list'])):
         ex['n'] = n
         
@@ -631,11 +631,11 @@ def store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex):
         
         
         store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex)
-
+    #%%
     return
 
 def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
-#%%
+    #%%
     
     ex['output_ts_folder'] = os.path.join(ex['output_dic_folder'], 'timeseries')
     if os.path.isdir(ex['output_ts_folder']) != True : os.makedirs(ex['output_ts_folder'])
@@ -659,41 +659,39 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         
         mask_regions = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
         # Make time series for whole period
-#        Prec_trainsel = Prec_reg.isel(time=train['Prec_train_idx'])
-        # actor/precursor full 3d timeseries at RV period minus lag, normalized over std within dates_train_min_lag
-        ts_3d    = Prec_reg.sel(time=dates_lag)
+        ts_3d    = Prec_reg
         mask_notnan = (np.product(np.isnan(ts_3d.values),axis=0)==False) # nans == False
         mask = mask_notnan * mask_regions
         ts_3d     = ts_3d.where(mask==True)
         # ts_3d is given more weight to robust precursor regions
         ts_3d_w  = ts_3d  * ds_Sem['weights'].sel(lag=lag)
-#        ts_3d_nw = ts_3d_w / ds_Sem['std_train_min_lag'][idx]
+        ts_3d_nw = ts_3d_w / ds_Sem['std_train_min_lag'][idx]
 
         
         
 
         pattern_CPPA = ds_Sem['pattern_CPPA'].sel(lag=lag)
         CPPA_w = pattern_CPPA * ds_Sem['weights'].sel(lag=lag)
-#        CPPA_nw = CPPA_w / ds_Sem['std_train_min_lag'][idx]
+        CPPA_nw = CPPA_w / ds_Sem['std_train_min_lag'][idx]
         
         
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
         regions_for_ts = np.unique(Regions_lag_i[~np.isnan(Regions_lag_i)])
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                regions_for_ts, ts_3d_w, CPPA_w.values)[:2]
+                                regions_for_ts, ts_3d_nw, CPPA_nw.values)[:2]
         
         check_nans = np.where(np.isnan(ts_regions_lag_i))
         if check_nans[0].size != 0:
             print('{} nans found in time series of region {}, dropping this region.'.format(
                     check_nans[0].size, 
-                    regions_for_ts[check_nans[1]]))
+                    np.unique(regions_for_ts[check_nans[1]])))
             regions_for_ts = np.delete(regions_for_ts, check_nans[1])
             ts_regions_lag_i = np.delete(ts_regions_lag_i, check_nans[1], axis=1)
             sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
         
         name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
         spatcov_CPPA = cross_correlation_patterns(ts_3d_w, CPPA_w)
-        ts_3d_PEP = find_region(Prec_reg.sel(time=dates_lag), region=ex['regionmcK'])[0]
+        ts_3d_PEP = find_region(Prec_reg, region=ex['regionmcK'])[0]
         var_patt_PEP = find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
         spatcov_PEP = cross_correlation_patterns(ts_3d_PEP, var_patt_PEP)
         columns = list(regions_for_ts)
@@ -701,10 +699,11 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         columns.insert(0, 'spatcov_PEP')
         data = np.concatenate([spatcov_PEP.values[:,None], spatcov_CPPA.values[:,None], ts_regions_lag_i], axis=1)
 
-        df = pd.DataFrame(data = data, index=pd.to_datetime(spatcov_CPPA.time.values), columns=columns) 
+        df = pd.DataFrame(data = data, index=pd.to_datetime(ts_3d_w.time.values), columns=columns) 
         df.index.name = 'date'
                           
         df.to_csv(os.path.join(ex['output_ts_folder'], name_trainset ))
+        #%%
     return
 
 
@@ -1274,10 +1273,9 @@ def timeseries_tofit_bins(xarray, ex):
     # consists of the same day. For this to be true, you need to make sure that
     # the selday_pp period exactly fits in a integer multiple of 'tfreq'
     temporal_freq = np.timedelta64(ex['tfreq'], 'D') 
-    fit_steps_yr = (end_day - seldays_pp.min() ) / temporal_freq
+    fit_steps_yr = (end_day - seldays_pp.min() + np.timedelta64(1, 'D'))  / temporal_freq
     # line below: The +1 = include day 1 in counting
-    start_day = (end_day - (temporal_freq * np.round(fit_steps_yr, decimals=0))) \
-                + np.timedelta64(1, 'D') 
+    start_day = (end_day - (temporal_freq * np.round(fit_steps_yr, decimals=0))) + 1 
     
     def make_datestr_2(datetime, start_yr):
         breakyr = datetime.year.max()
@@ -2169,27 +2167,31 @@ def finalfigure(xrdata, file_name, kwrgs):
         extend = 'neither'
 
     cbar_ax = g.fig.add_axes([0.25, cbar_vert, 
-                                  0.5, cbar_hght], label='xbar')
+                                  0.5, cbar_hght], label='cbar')
 
     if 'clim' in kwrgs.keys(): #adjust the range of colors shown in cbar
         cnorm = np.linspace(kwrgs['clim'][0],kwrgs['clim'][1],11)
         vmin = kwrgs['clim'][0]
     else:
         cnorm = clevels
+
     norm = colors.BoundaryNorm(boundaries=cnorm, ncolors=256)
-#    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-#    cbar = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap, orientation='horizontal', 
-#                 extend=extend, norm=norm)
+    cbar = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap, orientation='horizontal', 
+                 extend=extend, ticks=cnorm, norm=norm)
     cbar = plt.colorbar(im, cbar_ax, cmap=cmap, orientation='horizontal', 
                  extend=extend, norm=norm)
+
     if 'cticks_center' in kwrgs.keys():
+        cbar = plt.colorbar(im, cbar_ax, cmap=cmap, orientation='horizontal', 
+                 extend=extend, norm=norm)
         cbar.set_ticks(clevels + 0.5)
-        cbar.set_ticklabels(clevels+1, update_ticks=True)
+        ticklabels = np.array(clevels+1, dtype=int)
+        cbar.set_ticklabels(ticklabels, update_ticks=True)
         cbar.update_ticks()
     
     if 'extend' in kwrgs.keys():
         if kwrgs['extend'][0] == 'min':
-            cbar.cmap.set_under(cbar.to_rgba(vmin))
+            cbar.cmap.set_under(cbar.to_rgba(kwrgs['vmin']))
     cbar.set_label(xrdata.attrs['units'], fontsize=16)
     cbar.ax.tick_params(labelsize=14)
     #%%

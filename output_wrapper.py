@@ -14,11 +14,12 @@ if sys.version[:1] == '3':
 import func_CPPA
 import func_pred
 import numpy as np
+import pandas as pd
 import xarray as xr 
-from ROC_score import ROC_score_wrapper
 import matplotlib.pyplot as plt
 import multiprocessing as mp
 import time
+from ROC_score import ROC_score_wrapper
 from ROC_score import plotting_timeseries
 xarray_plot = func_CPPA.xarray_plot
 
@@ -67,17 +68,30 @@ printset()
 # =============================================================================
 
     
-#ex['lags'] = ex['lags'][-1:]
-dic_exp = ({'ts and valid'  :   (True,True), 
-            'only ts'       :   (True,False),
-            'only Cov'      :   (False,False),
-            'Cov and valid' :   (False,True)
+#ex['lags'] = [5,15,30,50]
+dic_exp = ({'logit_valid_ts'  :   (True,True), 
+            'logit_ts'       :   (True,False),
+            'CPPA_spatcov'      :   (False,False),
+            'logit_valid_spatcov' :   (False,True)
             })
+dic_exp = ({
+            'CPPA_spatcov'      :   (False,False),
+            })
+    
+ex['shared_folder'] = ('/Users/semvijverberg/Dropbox/VIDI_Coumou/Paper1_Sem/'
+                 'output_summ/iter_1979_2017_tf1_mcKthresp_2.5deg_60nyr'
+                 '_95tperc_0.8tc_1rm_2019-02-26/lags[0,5,10,15,20,30,40,50,60]Ev1d0p_pmd1')
 
+df = pd.DataFrame(index=ex['lags'], 
+                  columns=['PEP', 'CPPA_spatcov', 
+                           'logit_ts', 'logit_valid_spatcov', 
+                           'logit_valid_ts'])
+df.index.name = 'lag'
+df.to_csv(ex['shared_folder']+'/output_summ.csv')
 #%%
 
 
-def all_output_wrapper(dic, exp_key='only Cov'):
+def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     #%%
     # load settings
     ex = dic['ex']
@@ -88,12 +102,13 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     # adapt settings for prediction
     ex['use_ts_logit'], ex['logit_valid'] = dic_exp[exp_key] 
     
-    print(exp_key)
+    
     # write output in textfile
     predict_folder = '{}{}_ts{}'.format(ex['pval_logit_final'], ex['logit_valid'], ex['use_ts_logit'])
     ex['exp_folder'] = os.path.join(ex['CPPA_folder'], predict_folder)
     predict_folder = os.path.join(ex['figpathbase'], ex['exp_folder'])
     if os.path.isdir(predict_folder) != True : os.makedirs(predict_folder)
+
     
     txtfile = os.path.join(predict_folder, 'experiment_settings.txt')
     with open(txtfile, "w") as text_file:
@@ -119,11 +134,22 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     # =============================================================================
     # Calculate AUC score
     # =============================================================================
+    print(exp_key)
     ex = ROC_score_wrapper(ex)
         
+    score_mcK       = np.round(ex['score'][-1][0], 2)
+    score_Sem       = np.round(ex['score'][-1][1], 2)
+
+    # =============================================================================
+    # Store data in output summary
+    # =============================================================================
+    if ex['lags'] == [0, 5, 10, 15, 20, 30, 40, 50, 60]:
+        df = pd.read_csv(ex['shared_folder']+'/output_summ.csv', index_col='lag')
+        df[exp_key] = score_mcK
+        df[exp_key] = score_Sem
+        df.to_csv(ex['shared_folder']+'/output_summ.csv')
     
-
-
+    
     #%%
 # =============================================================================
 #   Plotting
@@ -161,8 +187,6 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         patterns_Sem[n,:,:,:] = upd_pattern * l_ds_CPPA[n]['std_train_min_lag']
         patterns_mcK[n,:,:,:] = l_ds_PEP[n]['pattern'].sel(lag=ex['lags'])
     
-    score_mcK       = np.round(ex['score'][-1][0], 2)
-    score_Sem       = np.round(ex['score'][-1][1], 2)
     ROC_str_mcK      = ['{} days - AUC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
     ROC_str_Sem      = ['{} days - AUC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
     # Sem plot 
@@ -255,6 +279,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     #    func_CPPA.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
     
     #%% Robustness accross training sets
+#    ex['lags'] = [5,15,30,50]
     
     lats = patterns_Sem.latitude
     lons = patterns_Sem.longitude
@@ -268,11 +293,11 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         
         
     if ex['leave_n_out']:
-        n_lags = patterns_Sem.sel(n_tests=0).lag.size
+        n_lags = len(ex['lags'])
         n_lats = patterns_Sem.sel(n_tests=0).latitude.size
         n_lons = patterns_Sem.sel(n_tests=0).longitude.size
         
-        pers_patt = patterns_Sem.sel(n_tests=0).copy()
+        pers_patt = patterns_Sem.sel(n_tests=0).sel(lag=ex['lags']).copy()
     #    arrpatt = np.nan_to_num(patterns_Sem.values)
     #    mask_patt = (arrpatt != 0)
     #    arrpatt[mask_patt] = 1
@@ -285,17 +310,17 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         pers_patt = pers_patt.where(pers_patt.values != 0)
         size_trainset = ex['n_yrs'] - ex['leave_n_years_out']
         pers_patt.attrs['units'] = 'No. of times in final pattern [0 ... {}]'.format(ex['n_conv'])
-        pers_patt.attrs['title'] = ('Robustness\n{} different '
+        pers_patt.attrs['title'] = ('Robustness SST pattern\n{} different '
                                 'training sets (n={} yrs)'.format(ex['n_conv'],size_trainset))
         filename = os.path.join(ex['exp_folder'], 'Robustness_across_{}_training_tests'.format(ex['n_conv']) )
-        vmax = ex['n_conv'] + 1E-9
+        vmax = ex['n_conv'] 
         mean = np.round(pers_patt.mean(dim=('latitude', 'longitude')).values, 1)
     #    mean = pers_patt.quantile(0.80, dim=('latitude','longitude')).values
         std =  np.round(pers_patt.std(dim=('latitude', 'longitude')).values, 0)
         ax_text = ['mean = {}±{}'.format(mean[l],int(std[l])) for l in range(len(ex['lags']))]
         kwrgs = dict( {'title' : pers_patt.attrs['title'], 'clevels' : 'notdefault', 
-                       'steps' : 16, 'subtitles': ROC_str_Sem, 
-                       'vmin' : 0, 'vmax' : vmax, 'clim' : (max(0,vmax-20), vmax),
+                       'steps' : 11, 'subtitles': ROC_str_Sem, 
+                       'vmin' : max(0,vmax-20), 'vmax' : vmax, 'clim' : (max(0,vmax-20), vmax),
                        'cmap' : plt.cm.magma_r, 'column' : 2, 'extend':['min','yellow'],
                        'cbar_vert' : 0.05, 'cbar_hght' : 0.01,
                        'adj_fig_h' : 1.25, 'adj_fig_w' : 1., 
@@ -336,7 +361,8 @@ def all_output_wrapper(dic, exp_key='only Cov'):
     
     #%% Initial regions from only composite extraction:
     
-#    lags = ex['lags'][::2]
+    lags = ex['lags']
+    lags = [5] #5,15,30,50]
     if ex['leave_n_out']:
         subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
         total_folder = os.path.join(ex['figpathbase'], subfolder)
@@ -345,6 +371,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
         for n in np.arange(0, ex['n_conv'], 3, dtype=int): 
             yr = years[n]
             pattern_num_init = l_ds_CPPA[n]['pat_num_CPPA_clust'].sel(lag=lags)
+            ROC_str_Sem_ = [ROC_str_Sem[ex['lags'].index(l)] for l in lags]
             
     
     
@@ -353,11 +380,15 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                                     ' ','_')+'.png')
             for_plt = pattern_num_init.copy()
             for_plt.values = for_plt.values-0.5
-
+            
+            
             kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
-                           'steps' : ex['max_N_regs']+1, 'subtitles': ROC_str_Sem,
+                           'steps' : ex['max_N_regs']+1, 'subtitles': ROC_str_Sem_,
                            'vmin' : 0, 'vmax' : ex['max_N_regs'], 
-                           'cmap' : plt.cm.tab20, 'column' : 2,
+                           'cmap' : plt.cm.tab20, 'column' : 1,
+                           'cbar_vert' : 0.07, 'cbar_hght' : 0.000,
+                           'adj_fig_h' : 1.5, 'adj_fig_w' : 1., 
+                           'hspace' : -0.03, 'wspace' : 0.08,
                            'cticks_center' : True} )
             
             func_CPPA.plotting_wrapper(for_plt, ex, filename, kwrgs=kwrgs)
@@ -371,7 +402,7 @@ def all_output_wrapper(dic, exp_key='only Cov'):
                 for_plt = pattern_num.copy()
                 for_plt.values = for_plt.values-0.5
                 kwrgs = dict( {'title' : for_plt.attrs['title'], 'clevels' : 'notdefault', 
-                               'steps' : for_plt.max()+2, 'subtitles': ROC_str_Sem,
+                               'steps' : for_plt.max()+2, 'subtitles': ROC_str_Sem_,
                                'vmin' : 0, 'vmax' : for_plt.max().values+0.5, 
                                'cmap' : plt.cm.tab20, 'column' : 2} )
                 
