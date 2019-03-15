@@ -83,7 +83,7 @@ ex['shared_folder'] = ('/Users/semvijverberg/Dropbox/VIDI_Coumou/Paper1_Sem/'
                  '_95tperc_0.8tc_1rm_2019-02-26/lags[0,5,10,15,20,30,40,50,60]Ev1d0p_pmd1')
 
 df = pd.DataFrame(index=ex['lags'], 
-                  columns=['PEP', 'CPPA_spatcov', 
+                  columns=['nino3.4', 'nino3.4rm5', 'PEP', 'CPPA_spatcov', 
                            'logit_ts', 'logit_valid_spatcov', 
                            'logit_valid_ts'])
 df.index.name = 'lag'
@@ -145,8 +145,29 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     # =============================================================================
     if ex['lags'] == [0, 5, 10, 15, 20, 30, 40, 50, 60]:
         df = pd.read_csv(ex['shared_folder']+'/output_summ.csv', index_col='lag')
-        df[exp_key] = score_mcK
+        df['PEP'] = score_mcK
         df[exp_key] = score_Sem
+        df.to_csv(ex['shared_folder']+'/output_summ.csv')
+
+    # El nino 3.4
+    ex = func_pred.spatial_cov(RV_ts, ex, 'nino3.4', 'nino3.4rm5')
+    
+    # =============================================================================
+    # Calculate AUC score
+    # =============================================================================
+    print(exp_key)
+    ex = ROC_score_wrapper(ex)
+        
+    score_nino          = np.round(ex['score'][-1][0], 2)
+    score_ninorm5       = np.round(ex['score'][-1][1], 2)
+
+    # =============================================================================
+    # Store data in output summary
+    # =============================================================================
+    if ex['lags'] == [0, 5, 10, 15, 20, 30, 40, 50, 60]:
+        df = pd.read_csv(ex['shared_folder']+'/output_summ.csv', index_col='lag')
+        df['nino3.4']   = score_nino
+        df['nino3.4rm5'] = score_ninorm5
         df.to_csv(ex['shared_folder']+'/output_summ.csv')
     
     

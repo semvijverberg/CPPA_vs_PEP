@@ -674,7 +674,7 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         CPPA_w = pattern_CPPA * ds_Sem['weights'].sel(lag=lag)
         CPPA_nw = CPPA_w / ds_Sem['std_train_min_lag'][idx]
         
-        
+        # mean over regions
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
         regions_for_ts = np.unique(Regions_lag_i[~np.isnan(Regions_lag_i)])
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
@@ -689,19 +689,42 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
             ts_regions_lag_i = np.delete(ts_regions_lag_i, check_nans[1], axis=1)
             sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
         
-        name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
+        # spatial covariance of whole CPPA pattern
         spatcov_CPPA = cross_correlation_patterns(ts_3d_w, CPPA_w)
+        # spatial covariance of whole PEP pattern
         ts_3d_PEP = find_region(Prec_reg, region=ex['regionmcK'])[0]
         var_patt_PEP = find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
         spatcov_PEP = cross_correlation_patterns(ts_3d_PEP, var_patt_PEP)
-        columns = list(regions_for_ts)
+
+        # mean of El nino 3.4
+        ts_3d_nino = find_region(Prec_reg, region='elnino3.4')[0]
+        # get lonlat array of area for taking spatial means 
+        nino = np.reshape(ts_3d_nino.values, (ts_3d_nino.time.size,ts_3d_nino[0].size))
+        lons, lats = np.meshgrid(ts_3d_nino.longitude, ts_3d_nino.latitude)
+        cos_box = np.cos(np.deg2rad(lats))
+        cos_box_array = np.repeat(cos_box[None,:], ts_3d_nino.shape[0], 0)
+        cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
+        nino_index = np.nanmean(nino * cos_box_array, axis=1)
+        
+        
+        # merge data
+        columns = list(np.array(regions_for_ts, dtype=int))
         columns.insert(0, 'spatcov_CPPA')
         columns.insert(0, 'spatcov_PEP')
-        data = np.concatenate([spatcov_PEP.values[:,None], spatcov_CPPA.values[:,None], ts_regions_lag_i], axis=1)
+        columns.insert(0, 'nino3.4')
+
+               
+        data = np.concatenate([nino_index[:,None], spatcov_PEP.values[:,None], 
+                               spatcov_CPPA.values[:,None], ts_regions_lag_i], axis=1)
+                            
 
         df = pd.DataFrame(data = data, index=pd.to_datetime(ts_3d_w.time.values), columns=columns) 
+        df['nino3.4rm5'] = df['nino3.4'].rolling(int((365/12)*5), min_periods=1).mean()
+        columns.insert(1, 'nino3.4rm5')
+        df = df.reindex_axis(columns, axis=1)
         df.index.name = 'date'
-                          
+        
+        name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
         df.to_csv(os.path.join(ex['output_ts_folder'], name_trainset ))
         #%%
     return
@@ -1599,6 +1622,8 @@ def find_region(data, region='Mckinnonplot'):
         west_lon = -360; east_lon = -1; south_lat = -80; north_lat = -10
     elif region ==  'Tropics':
         west_lon = -360; east_lon = -1; south_lat = -15; north_lat = 30 
+    elif region ==  'elnino3.4':
+        west_lon = -170; east_lon = -120; south_lat = -5; north_lat = 5 
 #    elif region == 'for_soil':
         
 

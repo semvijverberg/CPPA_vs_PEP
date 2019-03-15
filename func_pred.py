@@ -12,159 +12,12 @@ import pandas as pd
 import func_CPPA
 import statsmodels.api as sm
 import itertools
-import scipy as sp
-import seaborn as sns
-import matplotlib.pyplot as plt
+#import scipy as sp
+#import seaborn as sns
+#import matplotlib.pyplot as plt
 
-def get_opt_freq(RV_ts, ex):
-    #%%                 
-    
-#    for n in range(len(ex['train_test_list'])):
-#        ex['n'] = n
-#        
-#        train, test = ex['train_test_list'][n]
-#        ex['test_year'] = list(set(test['RV'].time.dt.year.values))
-#        if ex['use_ts_logit'] == False:
-#            print('test year(s) {}, with {} events.'.format(ex['test_year'],
-#                                 test['events'].size))
-        
-    # get RV dates (period analyzed)
-    all_RV_dates = func_CPPA.to_datesmcK(RV_ts.time, RV_ts.time.dt.hour[0], 
-                                       RV_ts.time[0].dt.hour)
-    
-    for lag_idx, lag in enumerate(ex['lags']):
-        # load in timeseries
-        csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
-        path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
-        data = pd.read_csv(path, index_col='date')
-        
-        ### only test data ###
-        dates_test_lag = func_dates_min_lag(all_RV_dates, lag)[0]
-        
-        data_RVdates = data.loc[dates_test_lag]
-        regs = data_RVdates.columns
-        dfRV = pd.DataFrame(RV_ts.sel(time=all_RV_dates).values, index=data_RVdates.index,
-                            columns=['RVts'])
-                         
-        dfRV = (dfRV - dfRV.mean()) / dfRV.std()
-        data_n = (data_RVdates-data_RVdates.mean(axis=0)) / data_RVdates.std(axis=0)
-        data_n['RVts'] = dfRV
-        
-#        data_n_abs = data_n[data_n.columns[:]].abs()
-        
-#        #interaction ts excluding autocorrelation
-#        for reg in regs:
-#            data_n_abs[reg] = subtr_AR(data_n_abs[reg], 1)
-#        dfRV = subtr_AR(dfRV, 1)
-        
-#        data_i = data_n_abs.multiply(dfRV, axis='index')
-#        data_i.columns = [c + '_i' for c in data_i.columns]
-#        df_both = pd.concat([data_n, data_i], axis=1)
 
-        
-#        for reg in regs:
-#            plt.figure()
-#            n_days = 20
-##            df_both[one_yr][[reg, reg+'_i', 'RVts']].plot()
-##            data_i_n[one_yr][['RVts']].plot()
-#            plt.plot(autocorrelation(data_i[reg+'_i'])[:n_days])
-#            plt.plot(autocorrelation(data_n_abs[reg])[:n_days])
-#            plt.plot(autocorrelation(dfRV)[:n_days])
-##            data_n_subAR = subtr_AR(data_n, reg, 1)
-##            plt.plot(autocorrelation(data_n_subAR)[:n_days])
-#            dfRV_subAR = subtr_AR(data_n[reg])
-#            plt.plot(autocorrelation(dfRV_subAR)[:n_days])
-        
-        one_yr = pd.to_datetime(data_n.index).year == 2012
-        N_days = one_yr[one_yr==True].size
-        freq = 1./N_days
-        df_out = fft_powerspectrum2(data_n, freq, 60)
-
-        subplots_df(df_out, 3)
-        
-#        one_yr = pd.to_datetime(data_n.index).year == 2012
-#        N_days = one_yr[one_yr==True].size
-#        freq = 1./N_days
-#        df_out = fft_powerspectrum2(dfRV, freq, 60)
-#
-#        subplots_df(df_out, 1)
-            
-    #%%
-def subtr_AR(df):
-    from statsmodels.tsa.ar_model import AR
-    AR_model = AR(df.values).fit(ic='bic')
-    opt_lag = AR_model.X.shape[1]
-    return df - AR_model.predict(opt_lag, df.size+opt_lag-1)
-
-def autocorrelation(x):
-    xp = (x - np.mean(x))/np.std(x)
-    result = np.correlate(xp, xp, mode='full')
-    return result[int(result.size/2):]/(len(xp))
-
-def fft_np(y, freq):
-    yfft = sp.fftpack.fft(y)
-    ypsd = np.abs(yfft)**2
-    fftfreq = sp.fftpack.fftfreq(len(ypsd), freq)
-    i = fftfreq > 0
-    y = 2.0/len(y) * ypsd[i]
-    x = fftfreq[i]
-    return x, y
-
-def fft_powerspectrum2(df, freq, max_freq_stored):
-    
-    df_out = df[:max_freq_stored].copy()
-    
-    list_freq = []
-    for reg in df.columns:
-#        N = df.shape[0]
-#        xf = np.linspace(0.0, N*1, N+1)
-        fftfreq, yfft = fft_np(df[reg], freq)
-        
-        
-        df_out[reg] = yfft[:max_freq_stored]
-        df_out.index = fftfreq[:max_freq_stored]
-        idx = np.argmax(yfft)
-        text = '{} fft {:.1f}, freq {:.0f}'.format(
-                reg,
-                fftfreq[idx], 
-                fftfreq[idx]/freq)
-        list_freq.append(text)
-    df_out.columns = list_freq
-    return df_out
-
-def fft_powerspectrum(df, max_freq_stored):
-    df_out = df[:max_freq_stored].copy()
-    df_out.index = np.arange(1, max_freq_stored+1)
-    list_freq = []
-    for reg in df.columns:
-        N = df.shape[0]
-        xf = np.linspace(0.0, N*1, N+1)
-        yf = sp.fftpack.fft(df[reg])
-        y = 2.0/N * np.abs(yf[0:N//2])
-        df_out[reg] = y[:max_freq_stored]
-        list_freq.append('{} max on {} days'.format(
-                reg, int(xf[np.where(y == np.max(y))[0]][0])))
-    df_out.columns = list_freq
-    return df_out
-
-def subplots_df(df, colwrap):
-    if (df.columns.size) % colwrap == 0:
-        rows = int(df.columns.size / colwrap)
-    elif (df.columns.size) % colwrap != 0:
-        rows = int(df.columns.size / colwrap) + 1
-    fig, ax = plt.subplots(rows, colwrap, sharex='col', sharey='row',
-                           figsize = (10,8))
-    for i, ax in enumerate(fig.axes):
-        if i == df.columns.size:
-            ax.axis('off')
-            break
-        header = df.columns[i]
-        ax.plot(df.index, df[header])
-        ax.text(0.5, 0.9, header, horizontalalignment='center',
-                verticalalignment='center', transform=ax.transAxes)
-    return
-
-def spatial_cov(RV_ts, ex):
+def spatial_cov(RV_ts, ex, key1='spatcov_PEP', key2='spatcov_CPPA'):
     #%%
     ex['test_ts_mcK'] = np.zeros( len(ex['lags']) , dtype=list)
     ex['test_RV'] = np.zeros( len(ex['lags']) , dtype=list)
@@ -199,7 +52,7 @@ def spatial_cov(RV_ts, ex):
             idx = lag_idx
             if ex['use_ts_logit'] == False:
                 # spatial covariance CPPA
-                spat_cov_lag_i = data.loc[dates_test_lag]['spatcov_CPPA']
+                spat_cov_lag_i = data.loc[dates_test_lag][key2]
                 
             
                 if ex['n'] == 0:
@@ -209,7 +62,7 @@ def spatial_cov(RV_ts, ex):
                     ex['test_ts_Sem'][idx] = np.concatenate( [ex['test_ts_Sem'][idx], spat_cov_lag_i.values] ) 
             
             # spatial covariance PEP
-            spat_cov_lag_i = data.loc[dates_test_lag]['spatcov_PEP']
+            spat_cov_lag_i = data.loc[dates_test_lag][key1]
 
             if ex['n'] == 0:
                 ex['test_ts_mcK'][idx] = spat_cov_lag_i.values
