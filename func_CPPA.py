@@ -60,7 +60,7 @@ def load_data(ex):
         datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
         filename_precur = '{}_{}-{}_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
                            ex['startyear'], ex['endyear'], ex['grid_res'])
-        filename_precur = '{}_1979-2017_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
+        filename_precur = '{}_1979-2017_1jan_31dec_daily_{}deg.nc'.format(ex['name'],
                            ex['grid_res'])
         ex['endyear'] = int(datesRV[-1].year)
     
@@ -96,13 +96,10 @@ def load_data(ex):
     
     if ex['tfreq'] != 1:
         Prec_reg, datesvar = time_mean_bins(Prec_reg, ex)
-    
-    if ex['rollingmean'] != 1:
-        # Smoothen precursor time series by applying rolling mean
-        Prec_reg = rolling_mean_time(Prec_reg, ex)
+
     
     Prec_reg = Prec_reg.to_array().squeeze()
-    
+
     
     ## filter out outliers 
     if ex['name'][:2]=='sm':
@@ -119,8 +116,7 @@ def load_data(ex):
         Prec_reg.values = Prec_reg * mask_reg
         
 
-    #ex['lags_idx'] = [12, 18, 24, 30]  
-    #ex['lags'] = [l*ex['tfreq'] for l in ex['lags_idx'] ]
+
     ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
     ex['n_conv'] = ex['n_yrs'] 
     return RV_ts, Prec_reg, ex
@@ -129,16 +125,22 @@ def load_data(ex):
 
 
 def main(RV_ts, Prec_reg, ex):
-    if (ex['leave_n_out'] == False) and ex['ROC_leave_n_out'] == False : ex['n_conv'] = 1
+    #%%
+    if (ex['method'] == 'no_train_test_split') : ex['n_conv'] = 1
     if ex['method'][:5] == 'split' : ex['n_conv'] = 1
-    if ex['ROC_leave_n_out'] == True: 
+    if ex['ROC_leave_n_out'] == True or ex['method'] == 'no_train_test_split': 
         print('leave_n_out set to False')
         ex['leave_n_out'] = False
 
+    Prec_train_mcK = find_region(Prec_reg, region=ex['region'])[0]
+
+    rmwhere, window = ex['rollingmean']
+    if rmwhere == 'all' and window != 1:
+        Prec_reg = rolling_mean_time(Prec_reg, ex, center=False)
     
-    train_test_list = []
+    train_test_list  = []
     l_ds_CPPA        = []
-    l_ds_PEP        = []        
+    l_ds_PEP         = []        
     
     for n in range(ex['n_conv']):
         train_all_test_n_out = (ex['ROC_leave_n_out'] == True) & (n==0) 
@@ -157,7 +159,7 @@ def main(RV_ts, Prec_reg, ex):
             if ex['wghts_accross_lags'] == True:
                 ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
                 
-            ds_mcK = mcKmean(train, ex)             
+            ds_mcK = mcKmean(Prec_train_mcK, train, ex)             
         # Force Leave_n_out validation even though pattern is based on whole dataset
         if (ex['ROC_leave_n_out'] == True) & (ex['n']==0):
             # start selecting leave_n_out
@@ -166,14 +168,14 @@ def main(RV_ts, Prec_reg, ex):
                                               ex)    
         
 #        elif (ex['leave_n_out'] == True) & (ex['ROC_leave_n_out'] == False):
-        elif (ex['ROC_leave_n_out'] == False) or ex['method'][:5] == 'split':
+        elif (ex['method'] == 'iter') or ex['method'][:5] == 'split':
             # train each time on only train years
             ds_Sem = extract_precursor(Prec_reg, train, test, ex)    
             
             if ex['wghts_accross_lags'] == True:
                 ds_Sem['pattern'] = filter_autocorrelation(ds_Sem, ex)
                 
-            ds_mcK = mcKmean(Prec_reg, train, ex)  
+            ds_mcK = mcKmean(Prec_train_mcK, train, ex)  
             
 
         l_ds_CPPA.append(ds_Sem)
@@ -184,11 +186,12 @@ def main(RV_ts, Prec_reg, ex):
         
     ex['train_test_list'] = train_test_list
     
-    l_ds_CPPA = grouping_regions_similar_coords(l_ds_CPPA, ex, 
-                     grouping = 'group_accros_tests_single_lag', eps=10)
-    
+    if ex['method'] == 'iter' or ex['method'][:6] == 'random': 
+        l_ds_CPPA = grouping_regions_similar_coords(l_ds_CPPA, ex, 
+                         grouping = 'group_accros_tests_single_lag', eps=10)
+        
     store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex)
-
+    #%%
 #    if (ex['leave_n_out']==False) & (ex['ROC_leave_n_out']==False):
 #        # only need single run
 #        break
@@ -209,33 +212,28 @@ def main(RV_ts, Prec_reg, ex):
 # =============================================================================
 # =============================================================================
 
-def mcKmean(Prec_reg, train, ex):
+def mcKmean(Prec_train_mcK, train, ex):
     
-    Prec_train = Prec_reg.isel(time=train['Prec_train_idx'])
-    Prec_train_mcK = find_region(Prec_train, region=ex['region'])[0]
+    Prec_train = Prec_train_mcK.isel(time=train['Prec_train_idx'])
     dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
                                            Prec_train.time[0].dt.hour)
 #        time = Prec_train_mcK.time
     lats = Prec_train_mcK.latitude
     lons = Prec_train_mcK.longitude
-    pthresholds = np.linspace(1, 9, 9, dtype=int)
     
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
     pattern = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='mcK_Comp_diff_lags',
                           attrs={'units':'Kelvin'})
-    array = np.zeros( (len(ex['lags']), len(dates_train)) )
-    pattern_ts = xr.DataArray(data=array, coords=[ex['lags'], dates_train], 
-                          dims=['lag','time'], name='mcK_mean_ts_diff_lags',
-                          attrs={'units':'Kelvin'})
+
     
-    array = np.zeros( (len(ex['lags']), len(pthresholds)) )
-    pattern_p = xr.DataArray(data=array, coords=[ex['lags'], pthresholds], 
-                          dims=['lag','percentile'], name='mcK_mean_p_diff_lags')
+    
+    event_train = Ev_timeseries(train['RV'], ex['hotdaythres'], ex)[0].time
+    event_train = to_datesmcK(event_train, event_train.dt.hour[0], Prec_train_mcK.time[0].dt.hour)
+
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
-        event_train = Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
-        event_train = to_datesmcK(event_train, event_train.dt.hour[0], Prec_train_mcK.time[0].dt.hour)
+
         events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
         dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
         
@@ -257,79 +255,63 @@ def mcKmean(Prec_reg, train, ex):
 
         pattern_atlag = Prec_train_mcK.sel(time=events_min_lag).mean(dim='time')
         pattern[idx] = pattern_atlag 
-        ts_3d = Prec_train_mcK.sel(time=dates_train_min_lag) 
         
-        
-        crosscorr = cross_correlation_patterns(ts_3d, pattern_atlag)
-        crosscorr['time'] = pattern_ts.time
-        pattern_ts[idx] = crosscorr
-        # Percentile values based on training dataset
-        p_pred = []
-        for p in pthresholds:	
-            p_pred.append(np.percentile(crosscorr.values, p*10))
-        pattern_p[idx] = p_pred
-    ds_mcK = xr.Dataset( {'pattern' : pattern, 'ts' : pattern_ts, 'perc' : pattern_p} )
+
+    ds_mcK = xr.Dataset( {'pattern' : pattern} )
     return ds_mcK
 
 
 def train_test_wrapper(RV_ts, Prec_reg, ex):
     #%%
     now = datetime.datetime.now()
+    rmwhere, window = ex['rollingmean']
     if ex['leave_n_out'] == True and ex['method'][:6] == 'random':
         train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
                                           ex)
         
-        general_folder = '{}_leave_{}_out_{}_{}_tf{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
+        general_folder = '{}_leave_{}_out_{}_{}_tf{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm{}_{}'.format(
                             ex['method'], ex['leave_n_years_out'], ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['mcKthres'], ex['grid_res'],
                           ex['n_oneyr'], 
-                          ex['perc_map'], ex['comp_perc'], ex['rollingmean'], 
+                          ex['perc_map'], ex['comp_perc'], window, rmwhere, 
                           now.strftime("%Y-%m-%d"))
-      
-        
-    if ex['leave_n_out'] == True and ex['method'][:5] == 'split':
-        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
-                                          ex)
-    
 
-        general_folder = '{}_{}_{}_tf{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
-                            ex['method'], ex['startyear'], ex['endyear'],
-                          ex['tfreq'], ex['mcKthres'], ex['grid_res'],
-                          ex['n_oneyr'], 
-                          ex['perc_map'], ex['comp_perc'], ex['rollingmean'], 
-                          now.strftime("%Y-%m-%d"))
-        
-
-        
-    if ex['leave_n_out']==True and ex['method']=='iter': # and ex['ROC_leave_n_out']==False
-        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
-                                          ex)
-
-        general_folder = '{}_{}_{}_tf{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
-                            ex['method'], ex['startyear'], ex['endyear'],
-                          ex['tfreq'], ex['mcKthres'], ex['grid_res'],
-                          ex['n_oneyr'], 
-                          ex['perc_map'], ex['comp_perc'], ex['rollingmean'], 
-                          now.strftime("%Y-%m-%d"))
-                          
-                          
-    elif ex['leave_n_out'] == False:
+    elif ex['method']=='no_train_test_split':
+        print('Training on all years')
+        Prec_train_idx = np.arange(0, Prec_reg.time.size) #range(len(full_years)) if full_years[i] in rand_train_years]
         train = dict( { 'Prec'  : Prec_reg,
+                        'Prec_train_idx' : Prec_train_idx,
                         'RV'    : RV_ts,
-                        'events': Ev_timeseries(RV_ts, ex['hotdaythres'], ex)})
+                        'events': Ev_timeseries(RV_ts, ex['hotdaythres'], ex)[0]})
         test = train.copy()
 
-
+    
         general_folder = 'hindcast_{}_{}_tf{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm_{}'.format(
                           ex['startyear'], ex['endyear'],
                           ex['tfreq'], ex['mcKthres'], ex['grid_res'],
                           ex['n_oneyr'], 
                           ex['perc_map'], ex['comp_perc'], ex['rollingmean'], 
                           now.strftime("%Y-%m-%d"))
+        
+    else:
+        train, test, ex['test_years'] = rand_traintest(RV_ts, Prec_reg, 
+                                          ex)
+    
+
+        general_folder = '{}_{}_{}_tf{}_{}p_{}deg_{}nyr_{}tperc_{}tc_{}rm{}_{}'.format(
+                            ex['method'], ex['startyear'], ex['endyear'],
+                          ex['tfreq'], ex['mcKthres'], ex['grid_res'],
+                          ex['n_oneyr'], 
+                          ex['perc_map'], ex['comp_perc'], window, rmwhere, 
+                          now.strftime("%Y-%m-%d"))
+        
+                       
+                          
+
 
         
         ex['test_years'] = 'all_years'
-        print('Training on all years')
+
     
     subfolder         = 'lags{}Ev{}d{}p_pmd{}'.format(ex['lags'], ex['min_dur'], 
                              ex['max_break'], ex['prec_reg_max_d'])
@@ -361,7 +343,7 @@ def extract_precursor(Prec_reg, train, test, ex):
                           attrs={'units':'Precursor regions'})
     
     array = np.zeros( (len(ex['lags']), len(lats), len(lons)) )
-    std_train_lag = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
+    std_train_min_lag = xr.DataArray(data=array, coords=[ex['lags'], lats, lons], 
                           dims=['lag','latitude','longitude'], name='std_train_min_lag', 
                           attrs={'units':'std [-]'})
 
@@ -371,20 +353,18 @@ def extract_precursor(Prec_reg, train, test, ex):
     weights.name = 'weights'
    
 
-#    Actors_ts_GPH = [[] for i in ex['lags']] #!
-    
-#    x = 0
+    RV_event_train, dur = Ev_timeseries(train['RV'], ex['hotdaythres'], ex)
+    RV_event_train = RV_event_train.time
+    RV_event_train = to_datesmcK(RV_event_train, RV_event_train.dt.hour[0], 
+                                       Prec_train.time[0].dt.hour)
+    RV_dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
+                                      Prec_train.time[0].dt.hour)
+
     for lag in ex['lags']:
-#            i = ex['lags'].index(lag)
+
         idx = ex['lags'].index(lag)
-        event_train = Ev_timeseries(train['RV'], ex['hotdaythres'], ex).time
-        event_train = to_datesmcK(event_train, event_train.dt.hour[0], 
-                                           Prec_train.time[0].dt.hour)
-        events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
-        
-        dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
-                                           Prec_train.time[0].dt.hour)
-        dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
+        events_min_lag = RV_event_train - pd.Timedelta(int(lag), unit='d')
+        dates_train_min_lag = RV_dates_train - pd.Timedelta(int(lag), unit='d')
         
         ### exlude leap days ###
         # no leap days in dates_train_min_lag
@@ -392,26 +372,29 @@ def extract_precursor(Prec_reg, train, test, ex):
         # only keep noleapdays
         dates_train_min_lag = dates_train_min_lag[noleapdays].dropna(dim='time', how='all')
         # also kick out the corresponding events
-        dates_train = dates_train[noleapdays].dropna(dim='time', how='all')
+        RV_dates_train = RV_dates_train[noleapdays].dropna(dim='time', how='all')
         
        # no leap days in events_min_lag
         noleapdays = ((events_min_lag.dt.month == 2) & (events_min_lag.dt.day == 29))==False
         # only keep noleapdays
         events_min_lag = events_min_lag[noleapdays].dropna(dim='time', how='all') 
         # also kick out the corresponding events
-        event_train = event_train[noleapdays].dropna(dim='time', how='all')   
+        RV_event_train = RV_event_train[noleapdays].dropna(dim='time', how='all')   
 
         
         
-        event_idx = [list(dates_train.values).index(E) for E in event_train.values]
-        binary_events = np.zeros(dates_train.size)    
+        event_idx = [list(RV_dates_train.values).index(E) for E in RV_event_train.values]
+        binary_events = np.zeros(RV_dates_train.size)    
         binary_events[event_idx] = 1
-        std_train_lag[idx] = Prec_train.sel(time=dates_train_min_lag).std(dim='time')
-        ts_3d = Prec_train.sel(time=dates_train_min_lag)/std_train_lag[idx]
+        std_train_min_lag[idx] = Prec_train.sel(time=dates_train_min_lag).std(dim='time')
+        std_train_lag = std_train_min_lag[idx]
+        ts_3d = Prec_train.sel(time=dates_train_min_lag)
+        wghts_dur = np.sqrt(dur)
+        
         #%%
         # extract precursor regions composite approach
-        composite_p1, xrnpmap_p1, wghts_at_lag = extract_regs_p1(events_min_lag,
-                                                     ts_3d, std_train_lag[idx], ex)  
+        composite_p1, xrnpmap_p1, wghts_at_lag = extract_regs_p1(events_min_lag, wghts_dur,
+                                             ts_3d, std_train_lag, ex)  
 #        composite_p1.plot() 
 #        xrnpmap_p1.plot()
      
@@ -424,7 +407,7 @@ def extract_precursor(Prec_reg, train, test, ex):
 
         #%%        
     ds_Sem = xr.Dataset( {'pattern_CPPA' : pattern_CPPA, 'pat_num_CPPA' : pat_num_CPPA,
-                          'weights' : weights, 'std_train_min_lag' : std_train_lag } )
+                          'weights' : weights, 'std_train_min_lag' : std_train_min_lag } )
                           
                           
     
@@ -437,7 +420,7 @@ def extract_precursor(Prec_reg, train, test, ex):
 # =============================================================================
 # =============================================================================
 
-def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
+def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
     #%% 
     x=0
 #    T, pval, mask_sig = Welchs_t_test(sample, full, alpha=0.01)
@@ -452,8 +435,13 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
     comp_years = list(events_min_lag.time.dt.year.values)
 
 
-    ts_3d_train_n = ts_3d.copy()
-
+    ts_3d_train_n = ts_3d/std_train_lag
+    
+    if ex['extra_wght_dur'] == True:
+    #    # add weights proportional to duration of events
+        wghts_dur[wghts_dur==0] = 1
+        ts_3d_train_n = ts_3d_train_n *  wghts_dur[:,None,None]
+    
 
     all_yrs_set = list(set(ts_3d.time.dt.year.values))    
     ex['n_ch1'] = 1
@@ -472,7 +460,7 @@ def extract_regs_p1(events_min_lag, ts_3d, std_train_lag, ex):
     iter_regions = np.zeros( (len(chunks), ts_3d[0].size))
     
     for idx in range(len(chunks)):
-        yrs = chunks[idx]#[all_yrs_set.index(yr) for yr in yrs]
+        yrs = chunks[idx]
         yrs_trainfeat =  [i for i in all_yrs_set if i not in yrs] 
         
         # exclude years in event time series
@@ -760,6 +748,9 @@ def rand_traintest(RV_ts, Prec_reg, ex):
             ex['leave_n_years_out'] = size_test
             print('Using {} years to train and {} to test'.format(size_train, size_test))
             rand_test_years = all_years[-size_test:]
+#        elif ex['method'] == 'no_train_test_split':
+#            ex['leave_n_years_out'] = 0
+#            rand_test_years = []
             
     
             
@@ -777,21 +768,18 @@ def rand_traintest(RV_ts, Prec_reg, ex):
         Prec_train_idx = [i for i in range(len(full_years)) if full_years[i] in rand_train_years]
         RV_train_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_train_years]
         
-    #            RV_dates_test_idx = [i for i in range(len(RV_dates)) if RV_dates[i] in rand_test_years]
+        
         Prec_test_idx = [i for i in range(len(full_years)) if full_years[i] in rand_test_years]
         RV_test_idx = [i for i in range(len(RV_years)) if RV_years[i] in rand_test_years]
         
         
-        # This is inconveniently big to put into dictionary
+
         RV_train = RV_ts.isel(time=RV_train_idx)
         
-    #    if len(RV_dates_test_idx) 
-    #            dates_test = matchdatesRV.isel(time=RV_dates_test_idx)
-        Prec_test = Prec_reg.isel(time=Prec_test_idx)
         RV_test = RV_ts.isel(time=RV_test_idx)
         
-        event_train = Ev_timeseries(RV_train, ex['hotdaythres'], ex).time
-        event_test = Ev_timeseries(RV_test, ex['hotdaythres'], ex).time
+        event_train = Ev_timeseries(RV_train, ex['hotdaythres'], ex)[0].time
+        event_test = Ev_timeseries(RV_test, ex['hotdaythres'], ex)[0].time
         
         test_years = [yr for yr in list(set(RV_years)) if yr in rand_test_years]
         
@@ -807,11 +795,8 @@ def rand_traintest(RV_ts, Prec_reg, ex):
                    
         
         train = dict( {    'RV'             : RV_train,
-                           'events'         : event_train,
                            'Prec_train_idx' : Prec_train_idx})
-        test = dict( {     'Prec'           : Prec_test,
-                           'RV'             : RV_test,
-                           'events'         : event_test,
+        test = dict( {     'RV'             : RV_test,
                            'Prec_test_idx'  : Prec_test_idx})
     #%%
     return train, test, test_years
@@ -1266,8 +1251,12 @@ def Ev_timeseries(xarray, threshold, ex):
         # if shorter then min_dur, then not counted as event
         if No_ev_ind.size < min_dur:
             peak_o_thresh[No_ev_ind] = 0
-#             all other events are subtracted one
-#            peak_o_thresh[np.where(peak_o_thresh > i)[0]] -= 1
+            
+    dur = np.zeros( (peak_o_thresh.size) )
+    for i in np.arange(1, max(peak_o_thresh)+1):
+        size = peak_o_thresh[peak_o_thresh==i].size
+        dur[peak_o_thresh==i] = size
+
     if np.sum(peak_o_thresh) < 1:
         Events = Ev_ts.where(peak_o_thresh > 0 ).dropna(how='all', dim='time').time
         pass
@@ -1283,7 +1272,7 @@ def Ev_timeseries(xarray, threshold, ex):
         Events = xarray.sel(time=Ev_dates)
     
     #%%
-    return Events
+    return Events, dur
 
 def timeseries_tofit_bins(xarray, ex):
     datetime = pd.to_datetime(xarray['time'].values)
@@ -1546,7 +1535,7 @@ def rolling_mean_xr(xarray, win):
 
     return new_xarray
 
-def rolling_mean_time(xarray_or_file, ex):
+def rolling_mean_time(xarray_or_file, ex, center):
     #%%
 #    xarray_or_file = Prec_reg
 #    array = np.zeros(60)
@@ -1556,9 +1545,9 @@ def rolling_mean_time(xarray_or_file, ex):
     if type(xarray_or_file) == str:
         file_path = os.path.join(ex['path_pp'], xarray_or_file)        
         ds = xr.open_dataset(file_path, decode_cf=True, decode_coords=True, decode_times=False)
-        ds_rollingmean = ds.rolling(time=ex['rollingmean'], center=True, min_periods=1).mean()
+        ds_rollingmean = ds.rolling(time=ex['rollingmean'][1], center=center, min_periods=1).mean()
         
-        new_fname = 'rm{}_'.format(ex['rollingmean']) + xarray_or_file
+        new_fname = 'rm{}_'.format(ex['rollingmean'][1]) + xarray_or_file
         file_path = os.path.join(ex['path_pp'], new_fname)
         ds_rollingmean.to_netcdf(file_path, mode='w')
         print('saved netcdf as {}'.format(new_fname))
@@ -1567,10 +1556,10 @@ def rolling_mean_time(xarray_or_file, ex):
     else:
         # Taking rolling window mean with the closing on the right, 
         # meaning that we are taking the mean over the past at the index/label 
-        xr_rolling_mean = xarray_or_file.rolling(time=ex['rollingmean'], center=True, 
-                                                 min_periods=1).mean()
+        xr_rolling_mean = xarray_or_file.rolling(time=ex['rollingmean'][1], center=True, 
+                                                 min_periods=1).mean(dim='time')
         lat = 35
-        lon = 360-90
+        lon = 360-20
         
         def find_nearest(array, value):
             idx = (np.abs(array - value)).argmin()
@@ -1579,19 +1568,25 @@ def rolling_mean_time(xarray_or_file, ex):
         lat_idx = find_nearest(xarray_or_file['latitude'], lat)
         lon_idx = find_nearest(xarray_or_file['longitude'], lon)
         
+        
         singlegc = xarray_or_file.isel(latitude=lat_idx, 
                                       longitude=lon_idx) 
+
+        if type(singlegc) == type(xr.Dataset()):
+            singlegc = singlegc.to_array().squeeze()
         
         year = 2012
         singlegc_oneyr = singlegc.where(singlegc.time.dt.year == year).dropna(dim='time', how='all')
         dates = pd.to_datetime(singlegc_oneyr.time.values)
         plt.figure(figsize=(10,6))
-        plt.plot(dates, singlegc_oneyr.to_array().squeeze())
+        plt.plot(dates, singlegc_oneyr.squeeze())
 
         singlegc = xr_rolling_mean.isel(latitude=lat_idx, 
                                       longitude=lon_idx) 
+        if type(singlegc) == type(xr.Dataset()):
+            singlegc = singlegc.to_array().squeeze()
         singlegc_oneyr = singlegc.where(singlegc.time.dt.year == year).dropna(dim='time', how='all')
-        plt.plot(dates, singlegc_oneyr.to_array().squeeze())
+        plt.plot(dates, singlegc_oneyr.squeeze())
     #%%
     return xr_rolling_mean
 

@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 
 def get_opt_freq(RV_ts, ex):
     #%%                 
-    ex['output_ts_folder'] += '_regions_n'
+#    ex['output_ts_folder'] += '_regions_n'
 #    for n in range(len(ex['train_test_list'])):
 #        ex['n'] = n
 #        
@@ -58,9 +58,9 @@ def get_opt_freq(RV_ts, ex):
 #            plt.plot(autocorrelation(data_i[reg+'_i'])[:n_days])
 #            plt.plot(autocorrelation(data_n_abs[reg])[:n_days])
 #            plt.plot(autocorrelation(dfRV)[:n_days])
-
+        data_n = data
         
-        one_yr = pd.to_datetime(data_n.index).year == 2012
+        one_yr = pd.to_datetime(data_n.index).year == 1979
         N_days = one_yr[one_yr==True].size
         
 #        subplots_df(data_n[:10*N_days], 3, {'ylim':'normalize',
@@ -71,11 +71,11 @@ def get_opt_freq(RV_ts, ex):
         
         i = fftfreq > 0
         df_psd = df_psd[i]
-        period = np.array(1. / (fftfreq[i] * freq), dtype=int) / N_days
+        period = np.array(1. / (fftfreq[i] * freq), dtype=int) / 4
         df_psd.index = period
 #        df_psd[i].index = np.array(1. / (fftfreq[i] * freq), dtype=int)
         subplots_df(df_psd, 3, {'ylim':'normalize',
-                                    'xlim'  : (0,10),
+                                    'xlim'  : (0,1200),
                                     'title' : 'power spectrum normal timeseries' })
         #%%
 
@@ -113,7 +113,7 @@ def get_opt_freq(RV_ts, ex):
         period = np.array(1. / (fftfreq[i] * freq), dtype=int)
         df_psd.index = period
         subplots_df(df_psd, 3, {'ylim':(0,0.05),
-                                        'xlim':(0,50),
+                                        'xlim':(0,100),
                                         'title' : 'powerspectrum including interannual variability' })
     
         #%%
@@ -151,9 +151,9 @@ def ac_plot(df, colwrap=3, kwrgs={}):
         else:
             header = df.columns[i]
     
-            autocorr_temp = autocorrelation(df['RVts'])[:60]
-            autocorr_CPPA = autocorrelation(df[header])[:60]
-            ax.plot(autocorr_temp, label='temp')
+#            autocorr_temp = autocorrelation(df['RVts'])[:60]
+            autocorr_CPPA = autocorrelation(df[header])[:365]
+#            ax.plot(autocorr_temp, label='temp')
             ax.plot(autocorr_CPPA, label=header)
             ax.grid(which='major')
             ax.legend()

@@ -33,8 +33,8 @@ def spatial_cov(RV_ts, ex, key1='spatcov_PEP', key2='spatcov_CPPA'):
         test = ex['train_test_list'][n][1]
         ex['test_year'] = list(set(test['RV'].time.dt.year.values))
         if ex['use_ts_logit'] == False:
-            print('test year(s) {}, with {} events.'.format(ex['test_year'],
-                                 test['events'].size))
+            print('test year(s) {}'.format(ex['test_year']))
+                                 
         
         # get RV dates (period analyzed)
         dates_test = func_CPPA.to_datesmcK(test['RV'].time, test['RV'].time.dt.hour[0], 
@@ -153,7 +153,7 @@ def logit_fit_new(l_ds_CPPA, RV_ts, ex):
             csv_train_test_data = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
             path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
             data = pd.read_csv(path, index_col='date')
-            regions_for_ts = [int(r[:-2]) for r in data.columns[3:].values]
+            regions_for_ts = [int(r) for r in data.columns[4:].values]
             
             ### only training data ###
             binary_train, mask_events = events_(train['RV'], ex)

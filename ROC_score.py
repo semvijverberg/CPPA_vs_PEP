@@ -423,7 +423,7 @@ def plotting_timeseries(test, yrs_to_plot, ex):
         g.fig.text(0.5, 1.02, title, fontsize=15,
                fontweight='heavy', horizontalalignment='center')
         filename = '{} day lead time series prediction'.format(lag)
-        file_name = os.path.join(ex['folder'],filename+'.png')
+        file_name = os.path.join(ex['exp_folder'],filename+'.png')
         g.fig.savefig(file_name ,dpi=250, frameon=True)
         plt.show()
         #%%

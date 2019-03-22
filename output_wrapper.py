@@ -149,27 +149,27 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         df[exp_key] = score_Sem
         df.to_csv(ex['shared_folder']+'/output_summ.csv')
 
-    # El nino 3.4
-    ex = func_pred.spatial_cov(RV_ts, ex, 'nino3.4', 'nino3.4rm5')
-    
-    # =============================================================================
-    # Calculate AUC score
-    # =============================================================================
-    print(exp_key)
-    ex = ROC_score_wrapper(ex)
-        
-    score_nino          = np.round(ex['score'][-1][0], 2)
-    score_ninorm5       = np.round(ex['score'][-1][1], 2)
-
-    # =============================================================================
-    # Store data in output summary
-    # =============================================================================
-    if ex['lags'] == [0, 5, 10, 15, 20, 30, 40, 50, 60]:
-        df = pd.read_csv(ex['shared_folder']+'/output_summ.csv', index_col='lag')
-        df['nino3.4']   = score_nino
-        df['nino3.4rm5'] = score_ninorm5
-        df.to_csv(ex['shared_folder']+'/output_summ.csv')
-    
+#    # El nino 3.4
+#    ex = func_pred.spatial_cov(RV_ts, ex, 'nino3.4', 'nino3.4rm5')
+#    
+#    # =============================================================================
+#    # Calculate AUC score
+#    # =============================================================================
+#    print(exp_key)
+#    ex = ROC_score_wrapper(ex)
+#        
+#    score_nino          = np.round(ex['score'][-1][0], 2)
+#    score_ninorm5       = np.round(ex['score'][-1][1], 2)
+#
+#    # =============================================================================
+#    # Store data in output summary
+#    # =============================================================================
+#    if ex['lags'] == [0, 5, 10, 15, 20, 30, 40, 50, 60]:
+#        df = pd.read_csv(ex['shared_folder']+'/output_summ.csv', index_col='lag')
+#        df['nino3.4']   = score_nino
+#        df['nino3.4rm5'] = score_ninorm5
+#        df.to_csv(ex['shared_folder']+'/output_summ.csv')
+#    
     
     #%%
 # =============================================================================
@@ -434,6 +434,7 @@ if __name__ == '__main__':
     start = time.time()
     num_workers = mp.cpu_count()  
     pool = mp.Pool(num_workers)
+    print(dic_exp.keys())
     for exp_key in dic_exp.keys():
         
         pool.apply_async(all_output_wrapper, args= (dic, exp_key))
