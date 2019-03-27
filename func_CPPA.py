@@ -211,13 +211,9 @@ def main(RV_ts, Prec_reg, ex):
 # Wrapper functions
 # =============================================================================
 # =============================================================================
-
 def mcKmean(Prec_train_mcK, train, ex):
     
-    Prec_train = Prec_train_mcK.isel(time=train['Prec_train_idx'])
-    dates_train = to_datesmcK(train['RV'].time, train['RV'].time.dt.hour[0], 
-                                           Prec_train.time[0].dt.hour)
-#        time = Prec_train_mcK.time
+
     lats = Prec_train_mcK.latitude
     lons = Prec_train_mcK.longitude
     
@@ -233,25 +229,9 @@ def mcKmean(Prec_train_mcK, train, ex):
 
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
-
-        events_min_lag = event_train - pd.Timedelta(int(lag), unit='d')
-        dates_train_min_lag = dates_train - pd.Timedelta(int(lag), unit='d')
         
-        ### exlude leap days ###
-        # no leap days in dates_train_min_lag
-        noleapdays = ((dates_train_min_lag.dt.month == 2) & (dates_train_min_lag.dt.day == 29))==False
-        # only keep noleapdays
-        dates_train_min_lag = dates_train_min_lag[noleapdays].dropna(dim='time', how='all')
-        # also kick out the corresponding events
-        dates_train = dates_train[noleapdays].dropna(dim='time', how='all')
-        
-       # no leap days in events_min_lag
-        noleapdays = ((events_min_lag.dt.month == 2) & (events_min_lag.dt.day == 29))==False
-        # only keep noleapdays
-        events_min_lag = events_min_lag[noleapdays].dropna(dim='time', how='all') 
-        # also kick out the corresponding events
-        event_train = event_train[noleapdays].dropna(dim='time', how='all')   
-
+        events_min_lag = func_dates_min_lag(event_train, lag)[1]
+ 
 
         pattern_atlag = Prec_train_mcK.sel(time=events_min_lag).mean(dim='time')
         pattern[idx] = pattern_atlag 
@@ -363,32 +343,18 @@ def extract_precursor(Prec_reg, train, test, ex):
     for lag in ex['lags']:
 
         idx = ex['lags'].index(lag)
-        events_min_lag = RV_event_train - pd.Timedelta(int(lag), unit='d')
-        dates_train_min_lag = RV_dates_train - pd.Timedelta(int(lag), unit='d')
         
-        ### exlude leap days ###
-        # no leap days in dates_train_min_lag
-        noleapdays = ((dates_train_min_lag.dt.month == 2) & (dates_train_min_lag.dt.day == 29))==False
-        # only keep noleapdays
-        dates_train_min_lag = dates_train_min_lag[noleapdays].dropna(dim='time', how='all')
-        # also kick out the corresponding events
-        RV_dates_train = RV_dates_train[noleapdays].dropna(dim='time', how='all')
-        
-       # no leap days in events_min_lag
-        noleapdays = ((events_min_lag.dt.month == 2) & (events_min_lag.dt.day == 29))==False
-        # only keep noleapdays
-        events_min_lag = events_min_lag[noleapdays].dropna(dim='time', how='all') 
-        # also kick out the corresponding events
-        RV_event_train = RV_event_train[noleapdays].dropna(dim='time', how='all')   
-
-        
-        
-        event_idx = [list(RV_dates_train.values).index(E) for E in RV_event_train.values]
+        events_min_lag = func_dates_min_lag(RV_event_train, lag)[1]
+        dates_train_min_lag = func_dates_min_lag(RV_dates_train, lag)[1]
+        event_idx = [list(dates_train_min_lag.values).index(E) for E in events_min_lag.values]
         binary_events = np.zeros(RV_dates_train.size)    
         binary_events[event_idx] = 1
+        
         std_train_min_lag[idx] = Prec_train.sel(time=dates_train_min_lag).std(dim='time')
         std_train_lag = std_train_min_lag[idx]
+        
         ts_3d = Prec_train.sel(time=dates_train_min_lag)
+        
         wghts_dur = np.sqrt(dur)
         
         #%%
@@ -422,7 +388,6 @@ def extract_precursor(Prec_reg, train, test, ex):
 
 def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
     #%% 
-    x=0
 #    T, pval, mask_sig = Welchs_t_test(sample, full, alpha=0.01)
 #    threshold = np.reshape( mask_sig, (mask_sig.size) )
 #    mask_threshold = threshold 
@@ -432,7 +397,7 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
 
     lats = ts_3d.latitude
     lons = ts_3d.longitude
-    comp_years = list(events_min_lag.time.dt.year.values)
+    comp_years = list(events_min_lag.year.values)
 
 
     ts_3d_train_n = ts_3d/std_train_lag
@@ -465,7 +430,7 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
         
         # exclude years in event time series
         one_out_idx_ev = [i for i in range(len(comp_years) ) if comp_years[i] in yrs_trainfeat]
-        event_one_out = events_min_lag.isel( time = one_out_idx_ev)
+        event_one_out = events_min_lag[ one_out_idx_ev ]
         comp_subset = ts_3d_train_n.sel(time=event_one_out)
         
         # region which are more constrained compared to whole training set 
@@ -496,6 +461,8 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
 #    %%
     weights = np.sum(reg_all_1, axis=0)
     weights[mask_final==True] = 0.
+    sum_count = np.reshape(weights, (lats.size, lons.size))
+    weights = sum_count / np.max(sum_count)
 #    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(weights, (lats.size, lons.size)))
     composite_p1 = ts_3d.sel(time=events_min_lag).mean(dim='time')
     nparray_comp = np.reshape(np.nan_to_num(composite_p1.values), (composite_p1.size))
@@ -516,9 +483,6 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
     # multiple variables/lags
     if Regions_lag_i.max()> 0:
         n_regions_lag_i = int(Regions_lag_i.max()) 	
-        A_r = np.reshape(Regions_lag_i, (lat_grid.size, lon_grid.size))
-        A_r + x
-    x = A_r.max() 
 
     # if there are less regions that are desired, the n_strongest is lowered
     if n_regions_lag_i <= ex['n_strongest']:
@@ -526,7 +490,7 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
                
     
     # reshape to latlon grid
-    npmap = np.reshape(Regions_lag_i, (lat_grid.size, lon_grid.size))
+    npmap = np.reshape(Regions_lag_i, (lats.size, lons.size))
     mask_strongest = (npmap!=0) 
     npmap[mask_strongest==False] = 0
     xrnpmap_init = composite_p1.copy()
@@ -537,11 +501,8 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
     xrnpmap_init.coords['mask'] = mask
     xrnpmap_init = xrnpmap_init.where(xrnpmap_init.mask==True)
 
-    sum_count = np.reshape(weights, (lat_grid.size, lon_grid.size))
-    weights = sum_count / np.max(sum_count)
-#    ts_3d_train_n.values = ts_3d_train_n.values * weights
-#    ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-#                                         regions_for_ts, ts_3d_train_n, Corr_Coeff)[:2]
+
+
 
 #    plt.figure()
 #    xrnpmap_init.plot.contourf(cmap=plt.cm.tab10)   
@@ -592,8 +553,11 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, npmean):
         B = np.zeros(Regions.shape)
         # Mask everything except region of interest
         B[Regions == r] = 1	
+#        # Calculates how values inside region vary over time, wgts vs anomaly
+#        wgts_ano = meanbox[B==1] / meanbox[B==1].max()
+#        ts_regions_lag_i[:,idx] = np.nanmean(actbox[:,B==1] * cos_box_array[:,B==1] * wgts_ano, axis =1)
         # Calculates how values inside region vary over time
-        ts_regions_lag_i[:,idx] = np.nanmean(actbox[:, B == 1] * cos_box_array[:, B == 1], axis =1)
+        ts_regions_lag_i[:,idx] = np.nanmean(actbox[:,B==1] * cos_box_array[:,B==1], axis =1)
         # get sign of region
         sign_ts_regions[idx] = np.sign(np.mean(meanbox[B==1]))
 #    print(sign_ts_regions)
@@ -605,6 +569,9 @@ def spatial_mean_regions(Regions_lag_i, regions_for_ts, ts_3d, npmean):
 
 def store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex):
     #%%
+    ex['output_ts_folder'] = os.path.join(ex['output_dic_folder'], 'timeseries_robwghts')
+    if os.path.isdir(ex['output_ts_folder']) != True : os.makedirs(ex['output_ts_folder'])
+    
     for n in range(len(ex['train_test_list'])):
         ex['n'] = n
         
@@ -625,27 +592,14 @@ def store_ts_wrapper(l_ds_CPPA, l_ds_PEP, RV_ts, Prec_reg, ex):
 def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
     #%%
     
-    ex['output_ts_folder'] = os.path.join(ex['output_dic_folder'], 'timeseries')
-    if os.path.isdir(ex['output_ts_folder']) != True : os.makedirs(ex['output_ts_folder'])
+    
 
     
     for lag in ex['lags']:
         idx = ex['lags'].index(lag)
-        dates = to_datesmcK(RV_ts.time, RV_ts.time.dt.hour[0], 
-                                           RV_ts.time[0].dt.hour)
-        dates_min_lag = dates - pd.Timedelta(int(lag), unit='d')
-        ### exlude leap days ###
-        # no leap days in dates_train_min_lag
-        noleapdays = ((dates_min_lag.dt.month == 2) & (dates_min_lag.dt.day == 29))==False
-        # only keep noleapdays
-        dates_lag = dates_min_lag[noleapdays].dropna(dim='time', how='all')
-        # also kick out the corresponding events
-        dates = dates[noleapdays].dropna(dim='time', how='all')
-        np.warnings.filterwarnings('ignore')
-        
-        
-        
-        mask_regions = ds_Sem['pat_num_CPPA'].sel(lag=lag).values >= 1
+
+
+        mask_regions = np.nan_to_num(ds_Sem['pat_num_CPPA'].sel(lag=lag).values) >= 1
         # Make time series for whole period
         ts_3d    = Prec_reg
         mask_notnan = (np.product(np.isnan(ts_3d.values),axis=0)==False) # nans == False
@@ -653,20 +607,21 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         ts_3d     = ts_3d.where(mask==True)
         # ts_3d is given more weight to robust precursor regions
         ts_3d_w  = ts_3d  * ds_Sem['weights'].sel(lag=lag)
+        # ts_3d_w is normalized w.r.t. std in RV dates min lag
         ts_3d_nw = ts_3d_w / ds_Sem['std_train_min_lag'][idx]
-
-        
-        
-
+        # same is done for pattern
         pattern_CPPA = ds_Sem['pattern_CPPA'].sel(lag=lag)
         CPPA_w = pattern_CPPA * ds_Sem['weights'].sel(lag=lag)
         CPPA_nw = CPPA_w / ds_Sem['std_train_min_lag'][idx]
         
-        # mean over regions
+        
+        # regions for time series
         Regions_lag_i = ds_Sem['pat_num_CPPA'][idx].squeeze().values
         regions_for_ts = np.unique(Regions_lag_i[~np.isnan(Regions_lag_i)])
+        # spatial mean (normalized & weighted)
         ts_regions_lag_i, sign_ts_regions = spatial_mean_regions(Regions_lag_i, 
-                                regions_for_ts, ts_3d_nw, CPPA_nw.values)[:2]
+                                regions_for_ts, ts_3d_w, CPPA_w.values)[:2]
+        
         
         check_nans = np.where(np.isnan(ts_regions_lag_i))
         if check_nans[0].size != 0:
@@ -677,23 +632,18 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
             ts_regions_lag_i = np.delete(ts_regions_lag_i, check_nans[1], axis=1)
             sign_ts_regions  = np.delete(sign_ts_regions, check_nans[1], axis=0)
         
+        
         # spatial covariance of whole CPPA pattern
         spatcov_CPPA = cross_correlation_patterns(ts_3d_w, CPPA_w)
         # spatial covariance of whole PEP pattern
         ts_3d_PEP = find_region(Prec_reg, region=ex['regionmcK'])[0]
         var_patt_PEP = find_region(ds_mcK['pattern'].sel(lag=lag), region=ex['regionmcK'])[0]
-        spatcov_PEP = cross_correlation_patterns(ts_3d_PEP, var_patt_PEP)
+        spatcov_PEP = cross_correlation_patterns(ts_3d_PEP, var_patt_PEP).values
 
         # mean of El nino 3.4
         ts_3d_nino = find_region(Prec_reg, region='elnino3.4')[0]
         # get lonlat array of area for taking spatial means 
-        nino = np.reshape(ts_3d_nino.values, (ts_3d_nino.time.size,ts_3d_nino[0].size))
-        lons, lats = np.meshgrid(ts_3d_nino.longitude, ts_3d_nino.latitude)
-        cos_box = np.cos(np.deg2rad(lats))
-        cos_box_array = np.repeat(cos_box[None,:], ts_3d_nino.shape[0], 0)
-        cos_box_array = np.reshape(cos_box_array, (cos_box_array.shape[0], -1))
-        nino_index = np.nanmean(nino * cos_box_array, axis=1)
-        
+        nino_index = area_weighted(ts_3d_nino).mean(dim=('latitude', 'longitude')).values
         
         # merge data
         columns = list(np.array(regions_for_ts, dtype=int))
@@ -702,20 +652,43 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
         columns.insert(0, 'nino3.4')
 
                
-        data = np.concatenate([nino_index[:,None], spatcov_PEP.values[:,None], 
+        data = np.concatenate([nino_index[:,None], spatcov_PEP[:,None], 
                                spatcov_CPPA.values[:,None], ts_regions_lag_i], axis=1)
                             
 
         df = pd.DataFrame(data = data, index=pd.to_datetime(ts_3d_w.time.values), columns=columns) 
         df['nino3.4rm5'] = df['nino3.4'].rolling(int((365/12)*5), min_periods=1).mean()
         columns.insert(1, 'nino3.4rm5')
-        df = df.reindex_axis(columns, axis=1)
+        df = df.reindex(columns, axis=1)
         df.index.name = 'date'
         
         name_trainset = 'testyr{}_{}.csv'.format(ex['test_year'], lag)
         df.to_csv(os.path.join(ex['output_ts_folder'], name_trainset ))
         #%%
     return
+
+
+def func_dates_min_lag(dates, lag):
+    dates_min_lag = pd.to_datetime(dates.values) - pd.Timedelta(int(lag), unit='d')
+    ### exlude leap days from dates_train_min_lag ###
+
+
+    # ensure that everything before the leap day is shifted one day back in time 
+    # years with leapdays now have a day less, thus everything before
+    # the leapday should be extended back in time by 1 day.
+    mask_lpyrfeb = np.logical_and(dates_min_lag.month == 2, 
+                                         dates_min_lag.is_leap_year
+                                         )
+    mask_lpyrjan = np.logical_and(dates_min_lag.month == 1, 
+                                         dates_min_lag.is_leap_year
+                                         )
+    mask_ = np.logical_or(mask_lpyrfeb, mask_lpyrjan)
+    new_dates = np.array(dates_min_lag)
+    new_dates[mask_] = dates_min_lag[mask_] - pd.Timedelta(1, unit='d')
+    dates_min_lag = pd.to_datetime(new_dates)   
+    # to be able to select date in pandas dataframe
+    dates_min_lag_str = [d.strftime('%Y-%m-%d %H:%M:%S') for d in dates_min_lag]                                         
+    return dates_min_lag_str, dates_min_lag
 
 
 def rand_traintest(RV_ts, Prec_reg, ex):
@@ -1382,28 +1355,6 @@ def time_mean_bins(xarray, ex):
     dates = pd.to_datetime(newdate.values)
     return group_bins.rename({'bins' : 'time'}), dates
 
-def expand_times_for_lags(datetime, ex):
-    expanded_time = []
-    for yr in set(datetime.year):
-        one_yr = datetime.where(datetime.year == yr).dropna(how='any')
-        start_mcK = one_yr[0]
-        #start day shifted half a time step
-        half_step = ex['tfreq']/2.
-#        origshift = np.arange(half_step, datetime.size, ex['tfreq'], dtype=int)
-        start_mcK = start_mcK - np.timedelta64(int(half_step+0.49), 'D')
-        last_day = '{}{} {}:00:00'.format(yr, ex['senddate'][4:], datetime[0].hour)
-        end_mcK   = pd.to_datetime(last_day)
-#        adj_year = pd.DatetimeIndex(start=start_mcK, end=end_mcK, 
-#                                    freq=(datetime[1] - datetime[0]), 
-#                                    closed = None).values
-        steps = len(one_yr)
-        shift_start = start_mcK - (steps) * np.timedelta64(ex['tfreq'], 'D')
-        adj_year = pd.DatetimeIndex(start=shift_start, end=end_mcK, 
-                                    freq=pd.Timedelta( '1 days'), 
-                                    closed = None).values
-        [expanded_time.append(date) for date in adj_year]
-    
-    return pd.to_datetime(expanded_time)
 
 def make_datestr(dates, ex, startyr, endyr, lpyr=False):
     
@@ -1490,11 +1441,13 @@ def save_figure(data, path):
     plt.savefig(os.path.join(path,name), format='jpeg', dpi=300, bbox_inches='tight')
     
 def area_weighted(xarray):
-    # Area weighted     
+    # Area weighted, taking cos of latitude in radians     
     coslat = np.cos(np.deg2rad(xarray.coords['latitude'].values)).clip(0., 1.)
-    area_weights = np.tile(np.sqrt(coslat)[..., np.newaxis],(1,xarray.longitude.size))
-    xarray.values = xarray.values * area_weights 
-    return xarray
+    area_weights = np.tile(coslat[..., np.newaxis],(1,xarray.longitude.size))
+#    xarray.values = xarray.values * area_weights 
+
+    return xr.DataArray(xarray.values * area_weights, coords=xarray.coords, 
+                           dims=xarray.dims)
     
 def convert_longitude(data):
     import numpy as np
@@ -2221,7 +2174,9 @@ def finalfigure(xrdata, file_name, kwrgs):
     return
 
 
-def figure_for_schematic(reg_all_1, chunks, lats, lons, ex):
+
+
+def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
     #%%
     map_proj = ccrs.PlateCarree(central_longitude=220) 
     regions = np.reshape(reg_all_1, (reg_all_1.shape[0], lats.size, lons.size) )
@@ -2269,10 +2224,18 @@ def figure_for_schematic(reg_all_1, chunks, lats, lons, ex):
         
         fig.savefig(folder+title+'.pdf',  bbox_inches='tight')
 #%%
-    # final figure
-    fig = plt.figure(figsize = (14,9))
+    # figure robustness 1
+    regions = np.reshape(reg_all_1, (reg_all_1.shape[0], lats.size, lons.size) )
+    name_chnks = [str(chnk) for chnk in chunks]
+    regions = xr.DataArray(regions, coords=[name_chnks, lats, lons], 
+                           dims=['yrs_out', 'latitude', 'longitude'])
+    regions  = regions.sel(latitude=slice(60.,0.))
+    regions = regions.sel(longitude=slice(160, 250))
+    
+    fig = plt.figure(figsize = (20,14))
     ax = plt.subplot(111, projection=map_proj)
     robustness = np.sum(regions,axis=0)
+    n_max = robustness.max().values
     xrdata = regions.isel(yrs_out=i).copy()
     xrdata.values = robustness
     plotdata = xrdata.where(xrdata.values > 0.)
@@ -2283,7 +2246,7 @@ def figure_for_schematic(reg_all_1, chunks, lats, lons, ex):
 #    xrdata = xrdata.where(xrdata.values > 0.8*plots)
     xrdata.plot.contour(ax=ax, 
                                transform=ccrs.PlateCarree(),
-                               colors=['purple'], levels=[0., ex['comp_perc'] * plots, plots],
+                               colors=['purple'], levels=[0., (ex['comp_perc'] * n_max)-1, n_max],
                                subplot_kws={'projection': map_proj},
                                )
     ax.coastlines(color='black', alpha=0.8, linewidth=2)
@@ -2292,15 +2255,17 @@ def figure_for_schematic(reg_all_1, chunks, lats, lons, ex):
     y_co = xrdata.latitude.values
 #        list_points = list_points - ex['grid_res']/2.
     for p in list_points:
-        value = str(int(xrdata.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
-        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${}$'.format(value), color='black', 
-                   s=70, transform=ccrs.PlateCarree())
+        valueint = int((xrdata.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
+        value = str(  np.round( int((valueint / n_max)*10), 1) )
+        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(value), color='black', 
+                   s=200, transform=ccrs.PlateCarree())
                   
 #    ax.outline_patch.set_visible(False)
 #    ax.background_patch.set_visible(False)
     ax.set_title('')
     title = 'Sum of incomplete composites'
-    t = ax.text(0.006, 0.992, ('Sum over 9 incomplete composites'),
+    t = ax.text(0.005, 0.993, ('Sum over incomplete composites, (n/{:.0f})*10'.format(
+                                robustness.max().values)),
 #                            'black contour line shows the gridcell passing the\n'
 #                            '\'Composite robustness threshold\''),
         verticalalignment='top', horizontalalignment='left',
@@ -2309,6 +2274,110 @@ def figure_for_schematic(reg_all_1, chunks, lats, lons, ex):
     t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='green'))
     
     fig.savefig(folder+title+'.pdf', bbox_inches='tight')
+    
+    # figure robustness 2
+    #%%
+    mask_final = ( np.sum(reg_all_1, axis=0) <= int(ex['comp_perc'] * len(chunks)))
+#    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.array(mask_final,dtype=int), (lats.size, lons.size))) 
+#    %%
+    weights = np.sum(reg_all_1, axis=0)
+    weights[mask_final==True] = 0.
+    sum_count = np.reshape(weights, (lats.size, lons.size))
+    weights = sum_count / np.max(sum_count)
+#    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(weights, (lats.size, lons.size)))
+    nparray_comp = np.reshape(np.nan_to_num(composite_p1.values), (composite_p1.size))
+    Corr_Coeff = np.ma.MaskedArray(nparray_comp, mask=mask_final)
+    lat_grid = composite_p1.latitude.values
+    lon_grid = composite_p1.longitude.values
+
+
+    # retrieve regions sorted in order of 'strength'
+    # strength is defined as an area weighted values in the composite
+    Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, ex)
+    
+    assert np.sum(Regions_lag_i) != 0., ('No regions detected with these criteria.')
+        
+    
+    
+    # reshape to latlon grid
+    npmap = np.reshape(Regions_lag_i, (lats.size, lons.size))
+    # renumber
+    
+    
+    
+    mask_strongest = (npmap!=0) 
+    npmap[mask_strongest==False] = 0
+    xrnpmap_init = composite_p1.copy()
+    xrnpmap_init.values = npmap
+    xrnpmap_init  = xrnpmap_init.sel(latitude=slice(60.,0.))
+    xrnpmap_init = xrnpmap_init.sel(longitude=slice(180, 250))
+    xrnpmap_init = xrnpmap_init.where(xrnpmap_init!= 0.)
+    
+
+    
+    regions_label = np.unique(xrnpmap_init.values)[np.isnan(np.unique(xrnpmap_init.values))==False]
+    for i in range(regions_label.size):
+        r = regions_label[i]
+        xrnpmap_init.values[xrnpmap_init.values==r] = i+1
+    
+    fig = plt.figure(figsize = (20,12))
+    ax = plt.subplot(111, projection=map_proj)
+    n_regs = xrnpmap_init.max().values
+
+    ax.coastlines(color='black', alpha=0.8, linewidth=2)
+    mask_wgths = xrdata.where(np.isnan(xrnpmap_init) == False)
+    list_points = np.argwhere(mask_wgths.values > int(ex['comp_perc'] * len(chunks)) )
+    x_co = mask_wgths.longitude.values
+    y_co = mask_wgths.latitude.values
+#        list_points = list_points - ex['grid_res']/2.
+    for p in list_points:
+        valueint = int((mask_wgths.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
+        value = str(  np.round( ((valueint / n_max)), 1) )
+        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(value), color='black', 
+                   s=200, transform=ccrs.PlateCarree())
+    
+    xrnpmap_init.values = xrnpmap_init.values - 0.5
+    kwrgs = dict( {        'steps' : n_regs+1, 
+                           'vmin' : 0, 'vmax' : n_regs, 
+                           'cmap' : plt.cm.tab20, 
+                           'cticks_center' : True} )
+
+    clevels = np.linspace(kwrgs['vmin'], kwrgs['vmax'],kwrgs['steps'], dtype=int)
+    
+    im = xrnpmap_init.plot.pcolormesh(ax=ax, cmap=plt.cm.tab20,
+                               transform=ccrs.PlateCarree(), levels=clevels,
+                               subplot_kws={'projection': map_proj},
+                                add_colorbar=False, alpha=0.5)
+      
+    cbar_ax = fig.add_axes([0.26, 0.18, 
+                                  0.5, 0.04], label='cbar')
+    norm = colors.BoundaryNorm(boundaries=clevels, ncolors=256)
+
+    cbar = plt.colorbar(im, cbar_ax, cmap=plt.cm.tab20, orientation='horizontal', 
+             extend='neither', norm=norm)
+    cbar.set_ticks(clevels + 0.5)
+    ticklabels = np.array(clevels+1, dtype=int)
+    cbar.set_ticklabels(ticklabels, update_ticks=True)
+    cbar.update_ticks()
+    
+    cbar.set_label('Region label', fontsize=16)
+    cbar.ax.tick_params(labelsize=14)
+#    ax.outline_patch.set_visible(False)
+#    ax.background_patch.set_visible(False)
+    ax.set_title('')
+    title = 'Sum of incomplete composites'
+    t = ax.text(0.006, 0.994, ('"Robustness weights", (n/{:.0f})'.format(
+                                robustness.max().values)),
+#                            'black contour line shows the gridcell passing the\n'
+#                            '\'Composite robustness threshold\''),
+        verticalalignment='top', horizontalalignment='left',
+        transform=ax.transAxes,
+        color='black', fontsize=20)
+    t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='green'))
+    
+    # composite mean
+    
+#%%
     #%%
     return
 

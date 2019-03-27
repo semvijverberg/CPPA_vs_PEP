@@ -31,8 +31,7 @@ path_pp  = "/Users/semvijverberg/surfdrive/Data_ERAint/input_pp" # path to netcd
 if os.path.isdir(path_pp) == False: os.makedirs(path_pp)
 
 
-ex = dict(
-     {'grid_res'    :       2.5,
+ex = {'grid_res'    :       2.5,
      'startyear'    :       1979,
      'endyear'      :       2017,
      'path_pp'      :       path_pp,
@@ -59,10 +58,10 @@ ex = dict(
      'pval_logit_final':    0.05,
      'mcKthres'     :       'mcKthres',
      'rollingmean'  :       ('CPPA', 1),
-     'extra_wght_dur':      True,
+     'extra_wght_dur':      False,
      'add_lsm'      :       False,
      'prec_reg_max_d':      0}  # 'mcKthres'
-     )
+
 
 
 ex['plot_ts'] = True
@@ -120,7 +119,7 @@ l_ds_CPPA, l_ds_PEP, ex = func_CPPA.main(RV_ts, Prec_reg, ex)
 
 
 
-
+#ex['output_dic_folder'] = '/Users/semvijverberg/surfdrive/McKinRepl/T2mmax_sst_Northern_PEPrectangle/iter_1979_2017_tf1_mcKthresp_2.5deg_60nyr_95tperc_0.8tc_1rmCPPA_wgtano_2019-03-25/lags[0,5,10,15,20,30,40,50,60]Ev1d0p_pmd0'
 
 output_dic_folder = ex['output_dic_folder']
 
