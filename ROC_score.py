@@ -5,7 +5,7 @@ Created on Mon Oct 15 17:50:16 2018
 
 @author: semvijverberg
 """
-import numpy
+
 import random
 import os
 import numpy as np
@@ -215,35 +215,35 @@ def ROC_score_wrapper(ex):
     return ex
 
 
-def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='default'):
+def ROC_score(predictions, observed, thr_event, n_boot, ex, thr_pred='default'):
     #%%
 #    predictions = ex['test_ts_mcK'][idx]
 #    observed = RV_ts
 #    thr_event = ex['hotdaythres']
     
    # calculate ROC scores
-    observed = numpy.copy(observed)
+    observed = np.copy(observed)
     # Standardize predictor time series
-#    predictions = predictions - numpy.mean(predictions)
-    # P_index = numpy.copy(AIR_rain_index)	
+#    predictions = predictions - np.mean(predictions)
+    # P_index = np.copy(AIR_rain_index)	
     # Test ROC-score			
     
-    TP_rate = numpy.ones((11))
-    FP_rate =  numpy.ones((11))
+    TP_rate = np.ones((11))
+    FP_rate =  np.ones((11))
     TP_rate[10] = 0
     FP_rate[10] = 0
-    AUC_new = numpy.zeros((n_boot))
+    AUC_new = np.zeros((n_boot))
     
     #print(fixed_event_threshold) 
-    events = numpy.where(observed > thr_event)[0][:]  
-    not_events = numpy.where(observed <= thr_event)[0][:]     
-    for p in numpy.linspace(1, 9, 9, dtype=int):	
+    events = np.where(observed > thr_event)[0][:]  
+    not_events = np.where(observed <= thr_event)[0][:]     
+    for p in np.linspace(1, 9, 9, dtype=int):	
         if str(thr_pred) == 'default':
-            p_pred = numpy.percentile(predictions, p*10)
+            p_pred = np.percentile(predictions, p*10)
         else:
             p_pred = thr_pred.sel(percentile=p).values[0]
-        positives_pred = numpy.where(predictions > p_pred)[0][:]
-        negatives_pred = numpy.where(predictions <= p_pred)[0][:]
+        positives_pred = np.where(predictions > p_pred)[0][:]
+        negatives_pred = np.where(predictions <= p_pred)[0][:]
 
 						
         True_pos = [a for a in positives_pred if a in events]
@@ -259,7 +259,7 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='defau
         TP_rate[p] = True_pos_rate
         
      
-    ROC_score = numpy.abs(numpy.trapz(TP_rate, x=FP_rate ))
+    ROC_score = np.abs(np.trapz(TP_rate, x=FP_rate ))
     # shuffled ROC
     
     ROC_bootstrap = 0
@@ -290,25 +290,25 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='defau
         # _____________________________________________________________________________
         #
     
-        new_observed = numpy.copy(new_observed)
-        # P_index = numpy.copy(MT_rain_index)	
+        new_observed = np.copy(new_observed)
+        # P_index = np.copy(MT_rain_index)	
         # Test AUC-score			
-        TP_rate = numpy.ones((11))
-        FP_rate =  numpy.ones((11))
+        TP_rate = np.ones((11))
+        FP_rate =  np.ones((11))
         TP_rate[10] = 0
         FP_rate[10] = 0
 
-        events = numpy.where(new_observed > thr_event)[0][:]  
-        not_events = numpy.where(new_observed <= thr_event)[0][:]     
-        for p in numpy.linspace(1, 9, 9, dtype=int):	
+        events = np.where(new_observed > thr_event)[0][:]  
+        not_events = np.where(new_observed <= thr_event)[0][:]     
+        for p in np.linspace(1, 9, 9, dtype=int):	
             if str(thr_pred) == 'default':
-                p_pred = numpy.percentile(predictions, p*10)
+                p_pred = np.percentile(predictions, p*10)
             else:
                 p_pred = thr_pred.sel(percentile=p).values[0]
             
-            p_pred = numpy.percentile(predictions, p*10)
-            positives_pred = numpy.where(predictions > p_pred)[0][:]
-            negatives_pred = numpy.where(predictions <= p_pred)[0][:]
+            p_pred = np.percentile(predictions, p*10)
+            positives_pred = np.where(predictions > p_pred)[0][:]
+            negatives_pred = np.where(predictions <= p_pred)[0][:]
     
     						
             True_pos = [a for a in positives_pred if a in events]
@@ -335,10 +335,10 @@ def ROC_score(predictions, observed, thr_event, lag, n_boot, ex, thr_pred='defau
             FP_rate[p] = False_pos_rate
             TP_rate[p] = True_pos_rate
         
-        AUC_score  = numpy.abs(numpy.trapz(TP_rate, FP_rate))
+        AUC_score  = np.abs(np.trapz(TP_rate, FP_rate))
         AUC_new[j] = AUC_score
-        AUC_new    = numpy.sort(AUC_new[:])[::-1]
-        pval       = (numpy.asarray(numpy.where(AUC_new > ROC_score)).size)/ n_boot
+        AUC_new    = np.sort(AUC_new[:])[::-1]
+        pval       = (np.asarray(np.where(AUC_new > ROC_score)).size)/ n_boot
         ROC_bootstrap = AUC_new 
     #%%
     return ROC_score, ROC_bootstrap

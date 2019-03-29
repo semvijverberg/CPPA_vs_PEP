@@ -1200,31 +1200,11 @@ def Ev_timeseries(xarray, threshold, ex):
     max_break = pd.Timedelta(max_break, 'd') / tfreq_RVts
     Ev_ts = xarray.where( xarray.values > threshold) 
     Ev_dates = Ev_ts.dropna(how='all', dim='time').time
-    event_idx = [list(xarray.time.values).index(E) for E in Ev_dates.values]
-    peak_o_thresh = np.zeros((Ev_ts.size))
-    ev_num = 1
-    # group events inter event time less than max_break
-    for i in range(Ev_dates.size):
-        if i < Ev_dates.size-1:
-            curr_ev = event_idx[i]
-            next_ev = event_idx[i+1]
-        elif i == Ev_dates.size-1:
-            curr_ev = event_idx[i]
-            next_ev = event_idx[i-1]
-                 
-        if abs(next_ev - curr_ev) <= max_break:
-            peak_o_thresh[curr_ev] = ev_num
-        elif abs(next_ev - curr_ev) > max_break:
-            peak_o_thresh[curr_ev] = ev_num
-            ev_num += 1
-
-    # remove events which are too short
-    for i in np.arange(1, max(peak_o_thresh)+1):
-        No_ev_ind = np.where(peak_o_thresh==i)[0]
-        # if shorter then min_dur, then not counted as event
-        if No_ev_ind.size < min_dur:
-            peak_o_thresh[No_ev_ind] = 0
-            
+    events_idx = [list(xarray.time.values).index(E) for E in Ev_dates.values]
+    n_timesteps = Ev_ts.size
+    
+    peak_o_thresh = Ev_binary(events_idx, n_timesteps, min_dur, max_break)
+    
     dur = np.zeros( (peak_o_thresh.size) )
     for i in np.arange(1, max(peak_o_thresh)+1):
         size = peak_o_thresh[peak_o_thresh==i].size
@@ -1246,6 +1226,33 @@ def Ev_timeseries(xarray, threshold, ex):
     
     #%%
     return Events, dur
+
+def Ev_binary(events_idx, n_timesteps, min_dur, max_break):
+    
+    peak_o_thresh = np.zeros((n_timesteps))
+    ev_num = 1
+    # group events inter event time less than max_break
+    for i in range(len(events_idx)):
+        if i < len(events_idx)-1:
+            curr_ev = events_idx[i]
+            next_ev = events_idx[i+1]
+        elif i == len(events_idx)-1:
+            curr_ev = events_idx[i]
+            next_ev = events_idx[i-1]
+                 
+        if abs(next_ev - curr_ev) <= max_break:
+            peak_o_thresh[curr_ev] = ev_num
+        elif abs(next_ev - curr_ev) > max_break:
+            peak_o_thresh[curr_ev] = ev_num
+            ev_num += 1
+
+    # remove events which are too short
+    for i in np.arange(1, max(peak_o_thresh)+1):
+        No_ev_ind = np.where(peak_o_thresh==i)[0]
+        # if shorter then min_dur, then not counted as event
+        if No_ev_ind.size < min_dur:
+            peak_o_thresh[No_ev_ind] = 0
+    return peak_o_thresh
 
 def timeseries_tofit_bins(xarray, ex):
     datetime = pd.to_datetime(xarray['time'].values)
@@ -2080,13 +2087,13 @@ def finalfigure(xrdata, file_name, kwrgs):
             fontdict = dict({'fontsize'     : 18,
                              'fontweight'   : 'bold'})
             ax.set_title(kwrgs['subtitles'][n_ax], fontdict=fontdict, loc='center')
-#        lons = [-5.8, -5.8, -5.5, -5.5]
-#        lats = [50.27, 50.48, 50.48, 50.27]
-        lons_sq = [-215, -215, -125, -125]
-        lats_sq = [50, 19, 19, 50]
-        ring = LinearRing(list(zip(lons_sq , lats_sq )))
-        ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green',
-                          linewidth=3.5)
+        
+        if 'drawbox' in kwrgs.keys():
+            lons_sq = [-215, -215, -125, -125]
+            lats_sq = [50, 19, 19, 50]
+            ring = LinearRing(list(zip(lons_sq , lats_sq )))
+            ax.add_geometries([ring], ccrs.PlateCarree(), facecolor='none', edgecolor='green',
+                              linewidth=3.5)
         
         if 'ax_text' in kwrgs.keys():
             ax.text(0.0, 1.01, kwrgs['ax_text'][n_ax],
@@ -2215,127 +2222,81 @@ def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
 #        ax.background_patch.set_visible(False)
         ax.set_title('')
         title = str(plotdata.yrs_out.values) 
-        t = ax.text(0.007, 0.01, 
-                    'Composite exluding {}'.format(title),
+        t = ax.text(0.006, 0.008, 
+                    'Composite excl. {}'.format(title),
             verticalalignment='bottom', horizontalalignment='left',
             transform=ax.transAxes,
-            color='black', fontsize=25, weight='bold')
+            color='black', fontsize=30.37, weight='bold')
         t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='red'))
         
         fig.savefig(folder+title+'.pdf',  bbox_inches='tight')
 #%%
     # figure robustness 1
-    regions = np.reshape(reg_all_1, (reg_all_1.shape[0], lats.size, lons.size) )
-    name_chnks = [str(chnk) for chnk in chunks]
-    regions = xr.DataArray(regions, coords=[name_chnks, lats, lons], 
-                           dims=['yrs_out', 'latitude', 'longitude'])
-    regions  = regions.sel(latitude=slice(60.,0.))
-    regions = regions.sel(longitude=slice(160, 250))
-    
-    fig = plt.figure(figsize = (20,14))
-    ax = plt.subplot(111, projection=map_proj)
-    robustness = np.sum(regions,axis=0)
-    n_max = robustness.max().values
-    xrdata = regions.isel(yrs_out=i).copy()
-    xrdata.values = robustness
-    plotdata = xrdata.where(xrdata.values > 0.)
-    plotdata.plot.pcolormesh(ax=ax, cmap=cmap,
-                               transform=ccrs.PlateCarree(), vmin=0, vmax=plots,
-                               subplot_kws={'projection': map_proj},
-                                add_colorbar=False, alpha=0.5)
-#    xrdata = xrdata.where(xrdata.values > 0.8*plots)
-    xrdata.plot.contour(ax=ax, 
-                               transform=ccrs.PlateCarree(),
-                               colors=['purple'], levels=[0., (ex['comp_perc'] * n_max)-1, n_max],
-                               subplot_kws={'projection': map_proj},
-                               )
-    ax.coastlines(color='black', alpha=0.8, linewidth=2)
-    list_points = np.argwhere(xrdata.values > 0)
-    x_co = xrdata.longitude.values
-    y_co = xrdata.latitude.values
-#        list_points = list_points - ex['grid_res']/2.
-    for p in list_points:
-        valueint = int((xrdata.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
-        value = str(  np.round( int((valueint / n_max)*10), 1) )
-        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(value), color='black', 
-                   s=200, transform=ccrs.PlateCarree())
-                  
-#    ax.outline_patch.set_visible(False)
-#    ax.background_patch.set_visible(False)
-    ax.set_title('')
-    title = 'Sum of incomplete composites'
-    t = ax.text(0.005, 0.993, ('Sum over incomplete composites, (n/{:.0f})*10'.format(
-                                robustness.max().values)),
-#                            'black contour line shows the gridcell passing the\n'
-#                            '\'Composite robustness threshold\''),
-        verticalalignment='top', horizontalalignment='left',
-        transform=ax.transAxes,
-        color='black', fontsize=20)
-    t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='green'))
-    
-    fig.savefig(folder+title+'.pdf', bbox_inches='tight')
-    
-    # figure robustness 2
-    #%%
-    mask_final = ( np.sum(reg_all_1, axis=0) <= int(ex['comp_perc'] * len(chunks)))
-#    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(np.array(mask_final,dtype=int), (lats.size, lons.size))) 
-#    %%
-    weights = np.sum(reg_all_1, axis=0)
-    weights[mask_final==True] = 0.
-    sum_count = np.reshape(weights, (lats.size, lons.size))
-    weights = sum_count / np.max(sum_count)
-#    plt.figure(figsize=(10,15)) ; plt.imshow(np.reshape(weights, (lats.size, lons.size)))
+    import matplotlib.patches as mpatches
+    import cartopy.feature as cfeature
+    lats_fig = slice(60.,5.)
+    lons_fig = slice(165, 243)
+    mask_final = ( np.sum(reg_all_1, axis=0) < int(ex['comp_perc'] * len(chunks)))
     nparray_comp = np.reshape(np.nan_to_num(composite_p1.values), (composite_p1.size))
     Corr_Coeff = np.ma.MaskedArray(nparray_comp, mask=mask_final)
     lat_grid = composite_p1.latitude.values
     lon_grid = composite_p1.longitude.values
 
-
     # retrieve regions sorted in order of 'strength'
     # strength is defined as an area weighted values in the composite
     Regions_lag_i = define_regions_and_rank_new(Corr_Coeff, lat_grid, lon_grid, ex)
-    
-    assert np.sum(Regions_lag_i) != 0., ('No regions detected with these criteria.')
-        
-    
-    
+
     # reshape to latlon grid
     npmap = np.reshape(Regions_lag_i, (lats.size, lons.size))
-    # renumber
-    
-    
-    
     mask_strongest = (npmap!=0) 
     npmap[mask_strongest==False] = 0
     xrnpmap_init = composite_p1.copy()
     xrnpmap_init.values = npmap
-    xrnpmap_init  = xrnpmap_init.sel(latitude=slice(60.,0.))
-    xrnpmap_init = xrnpmap_init.sel(longitude=slice(180, 250))
-    xrnpmap_init = xrnpmap_init.where(xrnpmap_init!= 0.)
-    
+    xrnpmap_init  = xrnpmap_init.sel(latitude=lats_fig)
+    xrnpmap_init = xrnpmap_init.sel(longitude=lons_fig)
+    mask_final   = xrnpmap_init!= 0.
+    xrnpmap_init = xrnpmap_init.where(mask_final)    
 
-    
+
+    # renumber
     regions_label = np.unique(xrnpmap_init.values)[np.isnan(np.unique(xrnpmap_init.values))==False]
     for i in range(regions_label.size):
         r = regions_label[i]
         xrnpmap_init.values[xrnpmap_init.values==r] = i+1
+        
     
-    fig = plt.figure(figsize = (20,12))
+    regions = np.reshape(reg_all_1, (reg_all_1.shape[0], lats.size, lons.size) )
+    name_chnks = [str(chnk) for chnk in chunks]
+    regions = xr.DataArray(regions, coords=[name_chnks, lats, lons], 
+                           dims=['yrs_out', 'latitude', 'longitude'])
+    regions  = regions.sel(latitude=lats_fig)
+    regions = regions.sel(longitude=lons_fig)
+    
+    fig = plt.figure(figsize = (20,14))
     ax = plt.subplot(111, projection=map_proj)
-    n_regs = xrnpmap_init.max().values
-
-    ax.coastlines(color='black', alpha=0.8, linewidth=2)
-    mask_wgths = xrdata.where(np.isnan(xrnpmap_init) == False)
-    list_points = np.argwhere(mask_wgths.values > int(ex['comp_perc'] * len(chunks)) )
-    x_co = mask_wgths.longitude.values
-    y_co = mask_wgths.latitude.values
-#        list_points = list_points - ex['grid_res']/2.
-    for p in list_points:
-        valueint = int((mask_wgths.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
-        value = str(  np.round( ((valueint / n_max)), 1) )
-        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(value), color='black', 
-                   s=200, transform=ccrs.PlateCarree())
+    robustness = np.sum(regions,axis=0)
+    n_max = robustness.max().values
+    freq_rawprec = regions.isel(yrs_out=i).copy()
+    freq_rawprec.values = robustness
+    plotdata = plotdata.sel(latitude=lats_fig)
+    plotdata = plotdata.sel(longitude=lons_fig)
+    npones = np.ones( (plotdata.shape) )
+    npones[mask_final.values==True] = 0
+    plotdata.values = npones
+    plotdata = plotdata.where(freq_rawprec.values > 0.)
     
+    plotdata.where(mask_final.values==False).plot.pcolormesh(ax=ax, cmap=cmap,
+                               transform=ccrs.PlateCarree(), vmin=0, vmax=plots,
+                               subplot_kws={'projection': map_proj},
+                                add_colorbar=False, alpha=0.3)
+    
+#    freq_rawprec.plot.contour(ax=ax, 
+#                               transform=ccrs.PlateCarree(), linewidths=3,
+#                               colors=['black'], levels=[0., (ex['comp_perc'] * n_max)-1, n_max],
+#                               subplot_kws={'projection': map_proj},
+#                               )
+    
+    n_regs = xrnpmap_init.max().values
     xrnpmap_init.values = xrnpmap_init.values - 0.5
     kwrgs = dict( {        'steps' : n_regs+1, 
                            'vmin' : 0, 'vmax' : n_regs, 
@@ -2343,43 +2304,183 @@ def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
                            'cticks_center' : True} )
 
     clevels = np.linspace(kwrgs['vmin'], kwrgs['vmax'],kwrgs['steps'], dtype=int)
-    
-    im = xrnpmap_init.plot.pcolormesh(ax=ax, cmap=plt.cm.tab20,
+    im = xrnpmap_init.plot.pcolormesh(ax=ax, cmap=plt.cm.Accent,
                                transform=ccrs.PlateCarree(), levels=clevels,
                                subplot_kws={'projection': map_proj},
                                 add_colorbar=False, alpha=0.5)
-      
-    cbar_ax = fig.add_axes([0.26, 0.18, 
+    
+    freq_rawprec = freq_rawprec.where(freq_rawprec.values > 0)
+
+    ax.coastlines(color='black', alpha=0.8, linewidth=2)
+    ax.add_feature(cfeature.LAND, facecolor='silver')
+    list_points = np.argwhere(np.logical_and(freq_rawprec.values > 0, mask_final.values==False))
+    x_co = freq_rawprec.longitude.values
+    y_co = freq_rawprec.latitude.values
+#        list_points = list_points - ex['grid_res']/2.
+    for p in list_points:
+        valueint = int((freq_rawprec.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
+        value = str(  np.round( (int((valueint / n_max)*10)/10), 1)  )
+        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(value), color='black', 
+                   s=150, alpha=0.2, transform=ccrs.PlateCarree())
+    
+
+
+
+    ax.set_title('')
+    list_points = np.argwhere(mask_final.values==True)
+    x_co = freq_rawprec.longitude.values
+    y_co = freq_rawprec.latitude.values
+    for p in list_points:
+        valueint = int((freq_rawprec.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
+        value =   np.round( (int((valueint / n_max)*10)/10), 1) 
+        if value == 1.0: value = int(value)
+        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(str(value)), color='black', 
+                   s=400, transform=ccrs.PlateCarree())
+    
+    cbar_ax = fig.add_axes([0.265, 0.07, 
                                   0.5, 0.04], label='cbar')
     norm = colors.BoundaryNorm(boundaries=clevels, ncolors=256)
 
     cbar = plt.colorbar(im, cbar_ax, cmap=plt.cm.tab20, orientation='horizontal', 
              extend='neither', norm=norm)
-    cbar.set_ticks(clevels + 0.5)
-    ticklabels = np.array(clevels+1, dtype=int)
+    cbar.set_ticks([])
+    ticklabels = np.array(clevels, dtype=int)
     cbar.set_ticklabels(ticklabels, update_ticks=True)
     cbar.update_ticks()
+    cbar.set_label('Precursor regions', fontsize=30)
+    cbar.ax.tick_params(labelsize=30)
     
-    cbar.set_label('Region label', fontsize=16)
-    cbar.ax.tick_params(labelsize=14)
-#    ax.outline_patch.set_visible(False)
-#    ax.background_patch.set_visible(False)
-    ax.set_title('')
+    yellowpatch = mpatches.Patch(color='lemonchiffon', alpha=1, 
+                                 label='Gridcells rejected')
+    ax.legend(handles=[yellowpatch], loc='lower left', fontsize=30)
     title = 'Sum of incomplete composites'
-    t = ax.text(0.006, 0.994, ('"Robustness weights", (n/{:.0f})'.format(
-                                robustness.max().values)),
-#                            'black contour line shows the gridcell passing the\n'
-#                            '\'Composite robustness threshold\''),
+
+    text = ['Precursor mask', 
+            'Precursor regions']
+    text_add = ['(all gridcells where N-FRP > 0.8)\n',
+                '(seperate colors)\n']
+    max_len = max([len(t) for t in text])
+    for t in text:
+        idx = text.index(t)
+        t_len = len(t)
+        expand = max_len - t_len
+#        if idx == 0: expand -= 2
+        text[idx] = t + ' ' * (expand) + '   :    ' + text_add[idx]
+    
+    text = text[0] + text[1] 
+    t = ax.text(0.004, 0.995, text,
         verticalalignment='top', horizontalalignment='left',
         transform=ax.transAxes,
-        color='black', fontsize=20)
-    t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='green'))
+        color='white', fontsize=35)
+    t.set_bbox(dict(facecolor='black', alpha=1.0, edgecolor='grey'))
     
+    fig.savefig(folder+title+'.pdf', bbox_inches='tight')
+    
+
+    
+    #%%
     # composite mean
+
+    composite  = composite_p1.sel(latitude=lats_fig)
+    composite = composite.sel(longitude=lons_fig)
+    composite = composite * (freq_rawprec / freq_rawprec.max())
+    composite = composite.where(mask_final.values==True)
+    fig = plt.figure(figsize = (20,12))
+    ax = plt.subplot(111, projection=map_proj)
+    clevels = np.linspace(-0.5, 0.5, 11)
+    im = composite.plot.pcolormesh(ax=ax, cmap=plt.cm.RdBu_r,
+                           transform=ccrs.PlateCarree(), levels=clevels,
+                           subplot_kws={'projection': map_proj},
+                            add_colorbar=False)
+    ax.coastlines(color='black', alpha=0.8, linewidth=2)
+    ax.add_feature(cfeature.LAND, facecolor='silver')
+    cbar_ax = fig.add_axes([0.265, 0.07, 
+                                  0.5, 0.04], label='cbar')
+    norm = colors.BoundaryNorm(boundaries=clevels, ncolors=256)
     
+    cbar = plt.colorbar(im, cbar_ax, cmap=plt.cm.tab20, orientation='horizontal', 
+             extend='both', norm=norm)
+    cbar.set_ticks([-0.5, -0.3, 0.0, 0.3, 0.5])
+    cbar.ax.tick_params(labelsize=20)
+    cbar.set_label('Sea Surface Temperature [Kelvin]', fontsize=20)
+    ax.set_title('')
+    t = ax.text(0.006, 0.994, ('Composite mean all training years\n(Precursor mask applied and weighted by N-FRP)'),
+        verticalalignment='top', horizontalalignment='left',
+        transform=ax.transAxes,
+        color='white', fontsize=35)
+    t.set_bbox(dict(facecolor='black', alpha=1.0, edgecolor='grey'))
+    title = 'final_composite'
+    fig.savefig(folder+title+'.pdf', bbox_inches='tight')
 #%%
     #%%
     return
+
+#
+#    # figure robustness 2
+#    #%%
+#    weights = np.sum(reg_all_1, axis=0)
+#    weights[mask_final==True] = 0.
+#    sum_count = np.reshape(weights, (lats.size, lons.size))
+#    weights = sum_count / np.max(sum_count)
+#    
+#
+#    
+#    fig = plt.figure(figsize = (20,12))
+#    ax = plt.subplot(111, projection=map_proj)
+#    n_regs = xrnpmap_init.max().values
+#
+#    ax.coastlines(color='black', alpha=0.8, linewidth=2)
+#    mask_wgths = xrdata.where(np.isnan(xrnpmap_init) == False)
+#    list_points = np.argwhere(mask_wgths.values > int(ex['comp_perc'] * len(chunks)) )
+#    x_co = mask_wgths.longitude.values
+#    y_co = mask_wgths.latitude.values
+##        list_points = list_points - ex['grid_res']/2.
+#    for p in list_points:
+#        valueint = int((mask_wgths.sel(latitude=y_co[p[0]], longitude=x_co[p[1]]).values))
+#        value = str(  np.round( ((valueint / n_max)), 1) )
+#        ax.scatter(x_co[p[1]], y_co[p[0]], marker='${:}$'.format(value), color='black', 
+#                   s=200, transform=ccrs.PlateCarree())
+#    
+#    xrnpmap_init.values = xrnpmap_init.values - 0.5
+#    kwrgs = dict( {        'steps' : n_regs+1, 
+#                           'vmin' : 0, 'vmax' : n_regs, 
+#                           'cmap' : plt.cm.tab20, 
+#                           'cticks_center' : True} )
+#
+#    clevels = np.linspace(kwrgs['vmin'], kwrgs['vmax'],kwrgs['steps'], dtype=int)
+#    
+#    im = xrnpmap_init.plot.pcolormesh(ax=ax, cmap=plt.cm.tab20,
+#                               transform=ccrs.PlateCarree(), levels=clevels,
+#                               subplot_kws={'projection': map_proj},
+#                                add_colorbar=False, alpha=0.5)
+#      
+#    cbar_ax = fig.add_axes([0.265, 0.18, 
+#                                  0.5, 0.04], label='cbar')
+#    norm = colors.BoundaryNorm(boundaries=clevels, ncolors=256)
+#
+#    cbar = plt.colorbar(im, cbar_ax, cmap=plt.cm.tab20, orientation='horizontal', 
+#             extend='neither', norm=norm)
+#    cbar.set_ticks(clevels + 0.5)
+#    ticklabels = np.array(clevels+1, dtype=int)
+#    cbar.set_ticklabels(ticklabels, update_ticks=True)
+#    cbar.update_ticks()
+#    
+#    cbar.set_label('Region label', fontsize=16)
+#    cbar.ax.tick_params(labelsize=14)
+##    ax.outline_patch.set_visible(False)
+##    ax.background_patch.set_visible(False)
+#    ax.set_title('')
+#    title = 'Sum of incomplete composites'
+#    t = ax.text(0.006, 0.994, ('"Robustness weights", (n/{:.0f})'.format(
+#                                robustness.max().values)),
+##                            'black contour line shows the gridcell passing the\n'
+##                            '\'Composite robustness threshold\''),
+#        verticalalignment='top', horizontalalignment='left',
+#        transform=ax.transAxes,
+#        color='black', fontsize=20)
+#    t.set_bbox(dict(facecolor='white', alpha=1, edgecolor='green'))
+#    title = 'robustness_weights'
+#    fig.savefig(folder+title+'.pdf', bbox_inches='tight')
 
     
 ## Filter out outliers

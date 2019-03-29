@@ -60,7 +60,7 @@ ex = {'grid_res'    :       2.5,
      'rollingmean'  :       ('CPPA', 1),
      'extra_wght_dur':      False,
      'add_lsm'      :       False,
-     'prec_reg_max_d':      0}  # 'mcKthres'
+     'prec_reg_max_d':      1}  # 'mcKthres'
 
 
 

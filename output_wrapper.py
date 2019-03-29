@@ -129,7 +129,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     if ex['use_ts_logit'] == True or ex['logit_valid'] == True:
         l_ds_CPPA, ex = func_pred.logit_fit_new(l_ds_CPPA, RV_ts, ex) 
     # by spatial covariance
-    ex = func_pred.spatial_cov(RV_ts, ex)
+    ex = func_pred.spatial_cov(ex)
     
     # =============================================================================
     # Calculate AUC score
@@ -148,6 +148,11 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         df['PEP'] = score_mcK
         df[exp_key] = score_Sem
         df.to_csv(ex['shared_folder']+'/output_summ.csv')
+    
+    for idx, lag in enumerate(ex['lags']):
+        df = pd.DataFrame(data=ex['test_ts_Sem'][idx])
+        filename_csv = exp_key + '_' + str(lag) + '.csv'
+        df.to_csv(os.path.join(predict_folder, filename_csv))
 
 #    # El nino 3.4
 #    ex = func_pred.spatial_cov(RV_ts, ex, 'nino3.4', 'nino3.4rm5')
@@ -175,6 +180,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
 # =============================================================================
 #   Plotting
 # =============================================================================
+    ex['lags'] = [5,15,30,50]
     
     lats = Prec_reg.latitude
     lons = Prec_reg.longitude
@@ -205,7 +211,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
                 ex['n_conv'] = ex['n_stop']
         
         upd_pattern = l_ds_CPPA[n]['pattern_' + name_for_ts].sel(lag=ex['lags'])
-        patterns_Sem[n,:,:,:] = upd_pattern * l_ds_CPPA[n]['std_train_min_lag']
+        patterns_Sem[n,:,:,:] = upd_pattern * l_ds_CPPA[n]['std_train_min_lag'].sel(lag=ex['lags'])
         patterns_mcK[n,:,:,:] = l_ds_PEP[n]['pattern'].sel(lag=ex['lags'])
     
     ROC_str_mcK      = ['{} days - AUC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
@@ -228,6 +234,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     
     
     # mcKinnon composite mean plot
+    kwrgs['drawbox'] = True
     filename = os.path.join(ex['exp_folder'], 'mcKinnon mean composite_tf{}_{}'.format(
                 ex['tfreq'], ex['lags']))
     mcK_mean = patterns_mcK.mean(dim='n_tests')
@@ -236,6 +243,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     mcK_mean.attrs['units'] = 'Kelvin'
     mcK_mean.attrs['title'] = 'Composite mean - Subjective green rectangle pattern'
     func_CPPA.plotting_wrapper(mcK_mean, ex, filename, kwrgs=kwrgs)
+    kwrgs.pop('drawbox')
     
     #if (ex['leave_n_out'] == True) and (ex['ROC_leave_n_out'] == False):
     #    # mcKinnon std plot
@@ -300,7 +308,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     #    func_CPPA.plot_oneyr_events(RV_ts, ex, i, folder, saving=True)
     
     #%% Robustness accross training sets
-#    ex['lags'] = [5,15,30,50]
+    
     
     lats = patterns_Sem.latitude
     lons = patterns_Sem.longitude
