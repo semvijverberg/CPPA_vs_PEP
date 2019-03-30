@@ -516,42 +516,54 @@ def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, bina
     return odds, track_r_kept, sign_r_kept, logitmodel
 
 def pred_gridcells(RV_ts, ex):
+    #%%
     from sklearn.metrics import roc_auc_score
     
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
     dicRV = np.load(filename,  encoding='latin1').item()
-    
-        
+#%%
+    csv_data = 'CPPA_spatcov_{}.csv'.format(lag)
+    path = os.path.join(predict_folder, csv_data)
+    data = pd.read_csv(path)
+   #%% 
     RV_array = dicRV['RV_array']
-    time = RV_array.time
-    RVhour = time.dt.hour[0].values
+    RVhour = RV_array.time.dt.hour[0].values
     lats = RV_array.latitude
     lons = RV_array.longitude
     n_space = lats.size*lons.size
     
-#    all_RV_dates = func_CPPA.to_datesmcK(time, time.dt.hour[0], 
-#                                       time[0].dt.hour)
-    datesRV = func_CPPA.make_datestr(pd.to_datetime(time.values), ex, 
+    datesRV = func_CPPA.make_datestr(pd.to_datetime(RV_array.time.values), ex, 
                                         ex['startyear'], ex['endyear'])
     datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
     
     RV_array = RV_array.sel(time=datesRV)
+    time = RV_array.time
     
     
     RV_flat  = np.reshape( RV_array.values, (time.size, n_space) )
-    
+    output = np.zeros( (n_space) )
     # params defining binary event timeseries
-    min_dur = ex['min_dur'] ; max_break = ex['max_break']  + 1
     tfreq_RVts = pd.Timedelta((time[1]-time[0]).values)
     min_dur = ex['min_dur'] ; max_break = ex['max_break']  + 1
     min_dur = pd.Timedelta(min_dur, 'd') / tfreq_RVts
     max_break = pd.Timedelta(max_break, 'd') / tfreq_RVts
+    
+    
     for gc in range(RV_flat.shape[-1]):
-        events_bin = np.zeros( time.size )
+        
         gc_threshold = np.mean(RV_flat[:,gc]) + np.std(RV_flat[:,gc])
         event_idx = np.where(RV_flat[:,gc] > gc_threshold)[0][:]  
-        events_bin[event_idx] = 1
-        func_CPPA.Ev_binary(event_idx, time.size,  min_dur, max_break)
-    
-    
-    
+#        events_bin[event_idx] = 1
+        y_true = func_CPPA.Ev_binary(event_idx, time.size,  min_dur, max_break)
+        y_true[y_true!=0] = 1
+        output[gc] = roc_auc_score(y_true, data['0'].values)
+        
+    output = np.reshape(output, (lats.size, lons.size))
+    output = xr.DataArray(output, dims=RV_array[0].dims, coords=RV_array[0].coords)    
+    fig = plt.figure( figsize=(10,6) ) 
+    proj = ccrs.PlateCarree(central_longitude=output.longitude.mean().values)
+    ax = fig.add_subplot(111, projection=proj)
+    ax.coastlines(facecolor='grey')
+    output.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(),
+                           vmin=0.5, vmax=1.0,
+                                     cmap=plt.cm.tab10)
