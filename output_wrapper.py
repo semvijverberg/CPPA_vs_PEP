@@ -88,6 +88,9 @@ df = pd.DataFrame(index=ex['lags'],
                            'logit_valid_ts'])
 df.index.name = 'lag'
 df.to_csv(ex['shared_folder']+'/output_summ.csv')
+
+ex['output_ts_folder'] += '_robwghts'
+
 #%%
 
 
@@ -180,7 +183,10 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
 # =============================================================================
 #   Plotting
 # =============================================================================
-    ex['lags'] = [5,15,30,50]
+#    lags = [0,5,15,30,50]
+#    lags = [15]
+#    score_Sem = [score_Sem[ex['lags'].index(l)] for l in lags]
+#    ex['lags'] = lags
     
     lats = Prec_reg.latitude
     lons = Prec_reg.longitude
@@ -219,9 +225,9 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     # Sem plot 
     # share kwargs with mcKinnon plot
     
-        
+    ROC_str_Sem_ = [ROC_str_Sem[ex['lags'].index(l)] for l in lags]  
     kwrgs = dict( {'title' : '', 'clevels' : 'notdefault', 'steps':17,
-                        'vmin' : -0.5, 'vmax' : 0.5, 'subtitles' : ROC_str_Sem,
+                        'vmin' : -0.4, 'vmax' : 0.4, 'subtitles' : ROC_str_Sem_,
                        'cmap' : plt.cm.RdBu_r, 'column' : 1} )
     
     mean_n_patterns = patterns_Sem.mean(dim='n_tests')
@@ -358,23 +364,31 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         func_CPPA.plotting_wrapper(pers_patt, ex, filename, kwrgs=kwrgs)
     #%% Weighing features if there are extracted every run (training set)
     # weighted by persistence of pattern over
+    lags = ex['lags']
+#    lags = [10] #5,15,30,50]   
+    ROC_str_Sem_ = [ROC_str_Sem[ex['lags'].index(l)] for l in lags]
+    
     if ex['leave_n_out']:
         kwrgs = dict( {'title' : '', 'clevels' : 'notdefault', 'steps':17,
-                        'vmin' : -0.5, 'vmax' : 0.5, 'subtitles' : ROC_str_Sem,
-                       'cmap' : plt.cm.RdBu_r, 'column' : 1} )
+                        'vmin' : -0.4, 'vmax' : 0.4, 'subtitles' : ROC_str_Sem_,
+                       'cmap' : plt.cm.RdBu_r, 'column' : 1,
+                       'cbar_vert' : 0.07, 'cbar_hght' : 0.01,
+                       'adj_fig_h' : 1.5, 'adj_fig_w' : 1., 
+                       'hspace' : 0.02, 'wspace' : 0.08,} )
         # weighted by persistence (all years == wgt of 1, less is below 1)
         mean_n_patterns = patterns_Sem.mean(dim='n_tests') * wghts/np.max(wghts)
-        mean_n_patterns['lag'] = ROC_str_Sem
+        mean_n_patterns = mean_n_patterns.sel(lag=lags)
+        mean_n_patterns['lag'] = ROC_str_Sem_
 
-        title = 'Composite mean - Objective Precursor Pattern'#\nweighted by robustness over {} tests'.format(
-    #                                            ex['n_conv'])
+        title = 'Composite mean - Objective Precursor Pattern'
+
         if mean_n_patterns.sum().values != 0.:
             mean_n_patterns.attrs['units'] = 'Kelvin'
             mean_n_patterns.attrs['title'] = title
                                  
             mean_n_patterns.name = 'ROC {}'.format(score_Sem)
-            filename = os.path.join(ex['exp_folder'], ('weighted by robustness '
-                                 'over {} tests'.format(ex['n_conv']) ))
+            filename = os.path.join(ex['exp_folder'], ('wghtrobus_'
+                                 '{}_tests_{}'.format(ex['n_conv'], lags) ))
     #        kwrgs = dict( {'title' : mean_n_patterns.name, 'clevels' : 'default', 'steps':17,
     #                        'vmin' : -3*mean_n_patterns.std().values, 'vmax' : 3*mean_n_patterns.std().values, 
     #                       'cmap' : plt.cm.RdBu_r, 'column' : 2} )
@@ -390,8 +404,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
     
     #%% Initial regions from only composite extraction:
     
-    lags = ex['lags']
-    lags = [5] #5,15,30,50]
+
     if ex['leave_n_out']:
         subfolder = os.path.join(ex['exp_folder'], 'intermediate_results')
         total_folder = os.path.join(ex['figpathbase'], subfolder)
@@ -400,7 +413,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         for n in np.arange(0, ex['n_conv'], 3, dtype=int): 
             yr = years[n]
             pattern_num_init = l_ds_CPPA[n]['pat_num_CPPA_clust'].sel(lag=lags)
-            ROC_str_Sem_ = [ROC_str_Sem[ex['lags'].index(l)] for l in lags]
+            
             
     
     
@@ -415,7 +428,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
                            'steps' : ex['max_N_regs']+1, 'subtitles': ROC_str_Sem_,
                            'vmin' : 0, 'vmax' : ex['max_N_regs'], 
                            'cmap' : plt.cm.tab20, 'column' : 1,
-                           'cbar_vert' : 0.07, 'cbar_hght' : 0.000,
+                           'cbar_vert' : 0.07, 'cbar_hght' : -0.03,
                            'adj_fig_h' : 1.5, 'adj_fig_w' : 1., 
                            'hspace' : -0.03, 'wspace' : 0.08,
                            'cticks_center' : True} )

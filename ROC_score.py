@@ -181,6 +181,12 @@ def ROC_score_wrapper(ex):
     ROC_Sem  = np.zeros(len(ex['lags']))
     ROC_mcK  = np.zeros(len(ex['lags']))
     ROC_boot = np.zeros(len(ex['lags']))
+    
+    events_idx = np.where(ex['test_RV'][0] > ex['hotdaythres'])[0]
+    y_true = func_CPPA.Ev_binary(events_idx, len(ex['test_RV'][0]),  ex['min_dur'], 
+                                 ex['max_break'], grouped=False)
+    y_true[y_true!=0] = 1
+    
     for lag_idx, lag in enumerate(ex['lags']):
         if lag_idx == 0:
             print('Calculating ROC scores\nDatapoints precursor length '
@@ -196,14 +202,15 @@ def ROC_score_wrapper(ex):
 #                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
         
         n_boot = 10
-        ROC_mcK[lag_idx], ROC_boot = ROC_score(ts_pred_mcK, ex['test_RV'][lag_idx],
-                              ex['hotdaythres'], lag, n_boot, ex, 'default')
+        ROC_mcK[lag_idx], ROC_boot = ROC_score(ts_pred_mcK, y_true,
+                                               n_boot, win=0, n_yrs=ex['n_yrs'], 
+                                               thr_pred='default')
         if ex['use_ts_logit'] == True:
-            ROC_Sem[lag_idx] = ROC_score(ts_pred_Sem, ex['test_RV'][lag_idx],
-                              ex['hotdaythres'], lag, 0, ex, 'default')[0]
+            ROC_Sem[lag_idx] = ROC_score(ts_pred_Sem, y_true,
+                                           0, 0, ex['n_yrs'], 'default')[0]
         elif ex['use_ts_logit'] == False:
-            ROC_Sem[lag_idx] = ROC_score(ex['test_ts_Sem'][lag_idx], ex['test_RV'][lag_idx],
-                              ex['hotdaythres'], lag, 0, ex, 'default')[0]
+            ROC_Sem[lag_idx] = ROC_score(ts_pred_Sem, y_true,
+                                           0, 0, ex['n_yrs'], 'default')[0]
         
         print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
         '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
@@ -215,14 +222,15 @@ def ROC_score_wrapper(ex):
     return ex
 
 
-def ROC_score(predictions, observed, thr_event, n_boot, ex, thr_pred='default'):
+def ROC_score(predictions, obs_binary, n_boot, win=0, n_yrs=39, thr_pred='default'):
     #%%
-#    predictions = ex['test_ts_mcK'][idx]
-#    observed = RV_ts
+#    win = 7
+#    predictions = pred
+#    obs_binary = y_true
 #    thr_event = ex['hotdaythres']
     
    # calculate ROC scores
-    observed = np.copy(observed)
+    obs_binary = np.copy(obs_binary)
     # Standardize predictor time series
 #    predictions = predictions - np.mean(predictions)
     # P_index = np.copy(AIR_rain_index)	
@@ -235,62 +243,109 @@ def ROC_score(predictions, observed, thr_event, n_boot, ex, thr_pred='default'):
     AUC_new = np.zeros((n_boot))
     
     #print(fixed_event_threshold) 
-    events = np.where(observed > thr_event)[0][:]  
-    not_events = np.where(observed <= thr_event)[0][:]     
+    events = np.where(obs_binary > 0.5)[0][:]  
+    not_events = np.where(obs_binary == 0.0)[0][:]    
+    
     for p in np.linspace(1, 9, 9, dtype=int):	
         if str(thr_pred) == 'default':
             p_pred = np.percentile(predictions, p*10)
         else:
             p_pred = thr_pred.sel(percentile=p).values[0]
-        positives_pred = np.where(predictions > p_pred)[0][:]
-        negatives_pred = np.where(predictions <= p_pred)[0][:]
+            
+        positives_pred = np.where(predictions >= p_pred)[0][:]
+        negatives_pred = np.where(predictions < p_pred)[0][:]
+        
+        pos_pred_win = positives_pred
+        events_win = events
+        if win != 0:
+            for w in range(win):
+                w += 1
+                pos_pred_win = np.concatenate([pos_pred_win, pos_pred_win-w, pos_pred_win+w])
+                events_win = np.concatenate([events_win, events_win-w, events_win+w])
 
-						
-        True_pos = [a for a in positives_pred if a in events]
-        False_neg = [a for a in negatives_pred if a in events]
+            
+#            neg_pred_win = [a for a in negatives_pred if a not in pos_pred_win]
+            pos_pred_win = np.unique(pos_pred_win)
+            events_win = np.unique(events_win)
+            not_events_win = [a for a in range(len(obs_binary)) if a not in events_win ]
+            # positive prediction are tested within a window
+            # i: pos_pred_win is expanded ± 3 days, i.e. more positive pred can match events
+            # ii: if a 
+            True_pos = len([a for a in events if a in pos_pred_win])
+            False_neg = len([a for a in events if a not in pos_pred_win])
+            
+
+            False_pos = len([a for a in positives_pred if a not in events_win])
+            True_neg = len([a for a in negatives_pred if a in not_events_win])
+            
+            
+#            # attempt 3
+#            #! this leads to double counting of positive pred which are all in events win
+#            True_pos = len([a for a in positives_pred if a in events_win])
+#            False_pos = len([a for a in positives_pred if a not in events_win])
+#            
+##            # negative prediction should also not lead to a single event within window
+##            True_neg = len([a for a in negatives_pred if a in not_events])
+##            False_neg = len([a for a in negatives_pred if a not in not_events])
+##
+#            # negative prediction are not changed
+#            True_neg = len([a for a in negatives_pred if a in not_events])
+#            False_neg = len([a for a in negatives_pred if a in events])
+
+        else:
+            True_pos = len([a for a in positives_pred if a in events])
+            False_neg = len([a for a in negatives_pred if a in events])
+            
+            False_pos = len([a for a in positives_pred if a  in not_events])
+            True_neg = len([a for a in negatives_pred if a  in not_events])
+            
+            True_pos = len([a for a in events if a in positives_pred])
+            False_neg = len([a for a in events if a in negatives_pred])
+            
+            False_pos = len([a for a in not_events if a  in positives_pred])
+            True_neg = len([a for a in not_events if a  in negatives_pred])
         
-        False_pos = [a for a in positives_pred if a  in not_events]
-        True_neg = [a for a in negatives_pred if a  in not_events]
-        
-        True_pos_rate = len(True_pos)/(float(len(True_pos)) + float(len(False_neg)))
-        False_pos_rate = len(False_pos)/(float(len(False_pos)) + float(len(True_neg)))
+        True_pos_rate = True_pos/(float(True_pos) + float(False_neg))
+        False_pos_rate = False_pos/(float(False_pos) + float(True_neg))
         
         FP_rate[p] = False_pos_rate
         TP_rate[p] = True_pos_rate
         
      
     ROC_score = np.abs(np.trapz(TP_rate, x=FP_rate ))
+#    print(ROC_score)
+#    print(True_pos, False_neg, False_pos, True_neg)
     # shuffled ROC
-    
+    #%%
     ROC_bootstrap = 0
     for j in range(n_boot):
         
 #        # shuffle observations / events
-#        old_index = range(0,len(observed),1)
+#        old_index = range(0,len(obs_binary),1)
 #        sample_index = random.sample(old_index, len(old_index))
         
         # shuffle years, but keep years complete:
-        old_index = range(0,len(observed),1)
+        old_index = range(0,len(obs_binary),1)
 #        n_yr = ex['n_yrs']
-        n_oneyr = int( len(observed) / ex['n_yrs'])
+        n_oneyr = int( len(obs_binary) / n_yrs )
         chunks = [old_index[n_oneyr*i:n_oneyr*(i+1)] for i in range(int(len(old_index)/n_oneyr))]
         # replace lost value because of python indexing 
 #        chunks[-1] = range(chunks[-1][0], chunks[-1][-1])
         rand_chunks = random.sample(chunks, len(chunks))
         #print(sample_index)
-#        new_observed = np.reshape(observed[sample_index], -1)  
+#        new_obs_binary = np.reshape(obs_binary[sample_index], -1)  
         
-        new_observed = []
+        new_obs_binary = []
         for chunk in rand_chunks:
-            new_observed.append( observed[chunk] )
+            new_obs_binary.append( obs_binary[chunk] )
         
-        new_observed = np.reshape( new_observed, -1 )
+        new_obs_binary = np.reshape( new_obs_binary, -1 )
         # _____________________________________________________________________________
         # calculate new AUC score and store it
         # _____________________________________________________________________________
         #
     
-        new_observed = np.copy(new_observed)
+        new_obs_binary = np.copy(new_obs_binary)
         # P_index = np.copy(MT_rain_index)	
         # Test AUC-score			
         TP_rate = np.ones((11))
@@ -298,8 +353,9 @@ def ROC_score(predictions, observed, thr_event, n_boot, ex, thr_pred='default'):
         TP_rate[10] = 0
         FP_rate[10] = 0
 
-        events = np.where(new_observed > thr_event)[0][:]  
-        not_events = np.where(new_observed <= thr_event)[0][:]     
+        events = np.where(new_obs_binary > 0.5)[0][:]  
+        not_events = np.where(new_obs_binary == 0.0)[0][:]  
+        
         for p in np.linspace(1, 9, 9, dtype=int):	
             if str(thr_pred) == 'default':
                 p_pred = np.percentile(predictions, p*10)

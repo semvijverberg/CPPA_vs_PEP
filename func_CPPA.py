@@ -1227,8 +1227,9 @@ def Ev_timeseries(xarray, threshold, ex):
     #%%
     return Events, dur
 
-def Ev_binary(events_idx, n_timesteps, min_dur, max_break):
+def Ev_binary(events_idx, n_timesteps, min_dur, max_break, grouped=False):
     
+    max_break = max_break + 1
     peak_o_thresh = np.zeros((n_timesteps))
     ev_num = 1
     # group events inter event time less than max_break
@@ -1252,6 +1253,19 @@ def Ev_binary(events_idx, n_timesteps, min_dur, max_break):
         # if shorter then min_dur, then not counted as event
         if No_ev_ind.size < min_dur:
             peak_o_thresh[No_ev_ind] = 0
+    
+    if grouped == True:
+        data = np.concatenate([peak_o_thresh[:,None],
+                               np.arange(len(peak_o_thresh))[:,None]],
+                                axis=1)
+        df = pd.DataFrame(data, index = range(len(peak_o_thresh)), 
+                                  columns=['values', 'idx'], dtype=int)
+        grouped = df.groupby(df['values']).mean().values.squeeze()[1:]            
+        peak_o_thresh[:] = 0
+        peak_o_thresh[np.array(grouped, dtype=int)] = 1
+    else:
+        pass
+    
     return peak_o_thresh
 
 def timeseries_tofit_bins(xarray, ex):
@@ -1857,7 +1871,7 @@ def xarray_plot(data, path='default', name = 'default', saving=False):
         cen_lon = data.longitude.mean().values
     proj = ccrs.PlateCarree(central_longitude=cen_lon)
     ax = fig.add_subplot(111, projection=proj)
-    ax.coastlines()
+    ax.coastlines(facecolor='grey')
     vmin = np.round(float(data.min())-0.01,decimals=2) 
     vmax = np.round(float(data.max())+0.01,decimals=2) 
     vmin = -max(abs(vmin),vmax) ; vmax = max(abs(vmin),vmax)
@@ -2284,7 +2298,7 @@ def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
     npones[mask_final.values==True] = 0
     plotdata.values = npones
     plotdata = plotdata.where(freq_rawprec.values > 0.)
-    
+    cmap = colors.ListedColormap(['lemonchiffon' ])
     plotdata.where(mask_final.values==False).plot.pcolormesh(ax=ax, cmap=cmap,
                                transform=ccrs.PlateCarree(), vmin=0, vmax=plots,
                                subplot_kws={'projection': map_proj},
@@ -2302,9 +2316,10 @@ def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
                            'vmin' : 0, 'vmax' : n_regs, 
                            'cmap' : plt.cm.tab20, 
                            'cticks_center' : True} )
-
+    
+    cmap = colors.ListedColormap(['cyan', 'green', 'purple' ])
     clevels = np.linspace(kwrgs['vmin'], kwrgs['vmax'],kwrgs['steps'], dtype=int)
-    im = xrnpmap_init.plot.pcolormesh(ax=ax, cmap=plt.cm.Accent,
+    im = xrnpmap_init.plot.pcolormesh(ax=ax, cmap=cmap,
                                transform=ccrs.PlateCarree(), levels=clevels,
                                subplot_kws={'projection': map_proj},
                                 add_colorbar=False, alpha=0.5)
@@ -2355,24 +2370,24 @@ def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
     ax.legend(handles=[yellowpatch], loc='lower left', fontsize=30)
     title = 'Sum of incomplete composites'
 
-    text = ['Precursor mask', 
-            'Precursor regions']
-    text_add = ['(all gridcells where N-FRP > 0.8)\n',
-                '(seperate colors)\n']
-    max_len = max([len(t) for t in text])
-    for t in text:
-        idx = text.index(t)
-        t_len = len(t)
-        expand = max_len - t_len
-#        if idx == 0: expand -= 2
-        text[idx] = t + ' ' * (expand) + '   :    ' + text_add[idx]
-    
-    text = text[0] + text[1] 
-    t = ax.text(0.004, 0.995, text,
-        verticalalignment='top', horizontalalignment='left',
-        transform=ax.transAxes,
-        color='white', fontsize=35)
-    t.set_bbox(dict(facecolor='black', alpha=1.0, edgecolor='grey'))
+#    text = ['Precursor mask', 
+#            'Precursor regions']
+#    text_add = ['(all gridcells where N-FRP > 0.8)\n',
+#                '(seperate colors)\n']
+#    max_len = max([len(t) for t in text])
+#    for t in text:
+#        idx = text.index(t)
+#        t_len = len(t)
+#        expand = max_len - t_len
+##        if idx == 0: expand -= 2
+#        text[idx] = t + ' ' * (expand) + '   :    ' + text_add[idx]
+#    
+#    text = text[0] + text[1] 
+#    t = ax.text(0.004, 0.995, text,
+#        verticalalignment='top', horizontalalignment='left',
+#        transform=ax.transAxes,
+#        color='white', fontsize=35)
+#    t.set_bbox(dict(facecolor='black', alpha=1.0, edgecolor='grey'))
     
     fig.savefig(folder+title+'.pdf', bbox_inches='tight')
     
@@ -2401,14 +2416,14 @@ def figure_for_schematic(reg_all_1, composite_p1, chunks, lats, lons, ex):
     cbar = plt.colorbar(im, cbar_ax, cmap=plt.cm.tab20, orientation='horizontal', 
              extend='both', norm=norm)
     cbar.set_ticks([-0.5, -0.3, 0.0, 0.3, 0.5])
-    cbar.ax.tick_params(labelsize=20)
-    cbar.set_label('Sea Surface Temperature [Kelvin]', fontsize=20)
+    cbar.ax.tick_params(labelsize=30)
+    cbar.set_label('Sea Surface Temperature [Kelvin]', fontsize=30)
     ax.set_title('')
-    t = ax.text(0.006, 0.994, ('Composite mean all training years\n(Precursor mask applied and weighted by N-FRP)'),
-        verticalalignment='top', horizontalalignment='left',
-        transform=ax.transAxes,
-        color='white', fontsize=35)
-    t.set_bbox(dict(facecolor='black', alpha=1.0, edgecolor='grey'))
+#    t = ax.text(0.006, 0.994, ('Composite mean all training years\n(Precursor mask applied and weighted by N-FRP)'),
+#        verticalalignment='top', horizontalalignment='left',
+#        transform=ax.transAxes,
+#        color='white', fontsize=35)
+#    t.set_bbox(dict(facecolor='black', alpha=1.0, edgecolor='grey'))
     title = 'final_composite'
     fig.savefig(folder+title+'.pdf', bbox_inches='tight')
 #%%

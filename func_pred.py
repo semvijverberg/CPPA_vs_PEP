@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import func_CPPA
 import statsmodels.api as sm
+import cartopy.crs as ccrs
 import itertools
 #import scipy as sp
 #import seaborn as sns
@@ -515,55 +516,155 @@ def train_weights_LogReg(ts_regions_train, sign_ts_regions, regions_for_ts, bina
     #%%        
     return odds, track_r_kept, sign_r_kept, logitmodel
 
-def pred_gridcells(RV_ts, ex):
+def pred_gridcells(RV_ts, filename, ex):
     #%%
     from sklearn.metrics import roc_auc_score
+    from ROC_score import ROC_score
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as colors
     
+    
+    # load prediction timeseries
+    filename_pred = '/Users/semvijverberg/Dropbox/VIDI_Coumou/Paper1_Sem/output_summ/GBR_FULL_50.csv'
+    data = pd.read_csv(filename_pred)
+    pred = data['values'].values
+    # how to define binary event timeseries:
+    min_dur = ex['min_dur'] ; max_break = ex['max_break']  
+    min_dur = 5 ; max_break = 1 
+    grouped = True ; win = 3
+
+    # load 'observations'
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
     dicRV = np.load(filename,  encoding='latin1').item()
-#%%
-    csv_data = 'CPPA_spatcov_{}.csv'.format(lag)
-    path = os.path.join(predict_folder, csv_data)
-    data = pd.read_csv(path)
-   #%% 
-    RV_array = dicRV['RV_array']
-    RVhour = RV_array.time.dt.hour[0].values
-    lats = RV_array.latitude
-    lons = RV_array.longitude
-    n_space = lats.size*lons.size
-    
-    datesRV = func_CPPA.make_datestr(pd.to_datetime(RV_array.time.values), ex, 
+    obs_array = dicRV['RV_array']
+    RVhour = obs_array.time.dt.hour[0].values
+    datesRV = func_CPPA.make_datestr(pd.to_datetime(obs_array.time.values), ex, 
                                         ex['startyear'], ex['endyear'])
-    datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
+    obs_array = obs_array.sel(time=datesRV + pd.Timedelta(int(RVhour), unit='h'))
     
-    RV_array = RV_array.sel(time=datesRV)
-    time = RV_array.time
+    def core_pred_gridcells(obs_array, pred, min_dur, max_break):
+        lats = obs_array.latitude
+        lons = obs_array.longitude
+        n_space = lats.size*lons.size
     
-    
-    RV_flat  = np.reshape( RV_array.values, (time.size, n_space) )
-    output = np.zeros( (n_space) )
-    # params defining binary event timeseries
-    tfreq_RVts = pd.Timedelta((time[1]-time[0]).values)
-    min_dur = ex['min_dur'] ; max_break = ex['max_break']  + 1
-    min_dur = pd.Timedelta(min_dur, 'd') / tfreq_RVts
-    max_break = pd.Timedelta(max_break, 'd') / tfreq_RVts
-    
-    
-    for gc in range(RV_flat.shape[-1]):
+        time = obs_array.time
         
-        gc_threshold = np.mean(RV_flat[:,gc]) + np.std(RV_flat[:,gc])
-        event_idx = np.where(RV_flat[:,gc] > gc_threshold)[0][:]  
-#        events_bin[event_idx] = 1
-        y_true = func_CPPA.Ev_binary(event_idx, time.size,  min_dur, max_break)
-        y_true[y_true!=0] = 1
-        output[gc] = roc_auc_score(y_true, data['0'].values)
         
-    output = np.reshape(output, (lats.size, lons.size))
-    output = xr.DataArray(output, dims=RV_array[0].dims, coords=RV_array[0].coords)    
-    fig = plt.figure( figsize=(10,6) ) 
-    proj = ccrs.PlateCarree(central_longitude=output.longitude.mean().values)
-    ax = fig.add_subplot(111, projection=proj)
-    ax.coastlines(facecolor='grey')
-    output.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(),
-                           vmin=0.5, vmax=1.0,
-                                     cmap=plt.cm.tab10)
+        obs_flat  = np.reshape( obs_array.values, (time.size, n_space) )
+        output = np.zeros( (n_space) )
+        # params defining binary event timeseries
+        tfreq_RVts = pd.Timedelta((time[1]-time[0]).values)
+
+        min_dur = pd.Timedelta(min_dur, 'd') / tfreq_RVts
+        max_break = pd.Timedelta(max_break, 'd') / tfreq_RVts
+        
+        
+        for gc in range(obs_flat.shape[-1])[100:110]:
+            
+            gc_threshold = np.mean(obs_flat[:,gc]) + 1 * np.std(obs_flat[:,gc])
+            events_idx = np.where(obs_flat[:,gc] > gc_threshold)[0][:]  
+
+            y_true = func_CPPA.Ev_binary(events_idx, time.size,  min_dur, 
+                                         max_break, grouped=grouped)
+            y_true[y_true!=0] = 1
+
+            
+            if gc == int(obs_flat.shape[1]/2):
+                print('approx. {} events in binary event timeseries'.format(
+                        y_true[y_true==1].size))
+            if y_true[y_true==1].size > 10:
+#                output[gc] = roc_auc_score(y_true, pred)
+                if win == 0:
+                    output[gc] = roc_auc_score(y_true, pred)
+#                    print('sklearn {}'.format(roc_auc_score(y_true, pred)))
+#                    output[gc] = ROC_score(pred, y_true, n_boot=0, win=win, n_yrs=39)[0]
+#                    print(output[gc])
+                else:
+                    
+                    output[gc] = ROC_score(pred, y_true, n_boot=0, win=win, n_yrs=39)[0]
+#                    if gc in range(obs_flat.shape[-1])[::100]:
+                    y_true = func_CPPA.Ev_binary(events_idx, time.size,  min_dur, 
+                                         max_break, grouped=grouped)
+                    y_true[y_true!=0] = 1
+                    print('{} sklearn {}'.format(gc, roc_auc_score(y_true, pred)))
+                    print(output[gc])
+                    
+            else: 
+                output[gc] = 0.0
+        output = np.reshape(output, (lats.size, lons.size))
+        output = xr.DataArray(output, dims=obs_array[0].dims, coords=obs_array[0].coords)    
+        return output
+        
+        
+    output = core_pred_gridcells(obs_array, pred, min_dur, max_break)
+    output = output.where(obs_array.mask==True)
+    #%%
+    fig, ax = plot_earth(view = "US")
+
+
+    clevels = np.arange(0.45, np.round(output.max().values, 1)+1E-9 , 0.05)
+    own_c = ['slategrey', 'green', 'cyan', 'blue', 
+                  'purple', 'red', 'firebrick', 'maroon']
+    own_colors = own_c[:len(clevels)]
+    cmap = colors.ListedColormap(own_colors)
+
+    
+    if output.max().values > clevels[-1]:
+        extend = 'max'
+    else:
+        extend = 'neither'
+    im = output.plot.pcolormesh(ax=ax, 
+                                transform=ccrs.PlateCarree(),
+                                levels=clevels,
+                                cmap=cmap,
+                                add_colorbar=False)
+    ax.set_title('')
+    
+    cbar_ax = fig.add_axes([0.25, 0.3, 
+                                  0.5, 0.03], label='cbar')    
+    norm = colors.BoundaryNorm(boundaries=clevels, ncolors=256)
+    cbar = plt.colorbar(im, cbar_ax, cmap=cmap, orientation='horizontal', 
+                 extend=extend, norm=norm)
+
+    cbar.set_ticks(clevels[1::2])
+    if output.max().values > clevels[-1]:
+        cbar.cmap.set_over(own_c[len(own_colors)-1])
+    cbar.set_label('AUC score', fontsize=16)
+    cbar.ax.tick_params(labelsize=14)
+    folder = ''
+    for s in filename_pred.split('/')[:-1]:
+        folder  = folder + s + '/'
+    name = filename_pred.split('/')[-1][:-3] + 'dur{}_pause{}_gr{}_win.png'.format(
+            min_dur, max_break, grouped, win)
+    filename = os.path.join(folder, name)
+    plt.savefig(filename, dpi=600)
+    
+
+    #%%
+def plot_earth(view="EARTH", kwrgs={}):
+    #%%
+    import cartopy.feature as cfeature
+    import matplotlib.pyplot as plt
+    # Create Big Figure
+    fig = plt.figure( figsize=(18,12) ) 
+
+    # create Projection and Map Elements
+    projection = ccrs.PlateCarree()
+    ax = fig.add_subplot(111, projection=projection)
+    ax.add_feature(cfeature.COASTLINE)
+    ax.add_feature(cfeature.BORDERS)
+    ax.add_feature(cfeature.STATES)
+    ax.add_feature(cfeature.OCEAN, color="white")
+    ax.add_feature(cfeature.LAND, color="linen")
+
+    if view == "US":
+        ax.set_xlim(-125, -65)
+        ax.set_ylim(29, 47)
+    elif view == "EAST US":
+        ax.set_xlim(-105, -65)
+        ax.set_ylim(25, 50)
+    elif view == "EARTH":
+        ax.set_xlim(-180, 180)
+        ax.set_ylim(-90, 90)
+    #%%
+    return fig, ax
