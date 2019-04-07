@@ -6,12 +6,13 @@ Created on Tue Feb  5 14:15:35 2019
 @author: semvijverberg
 """
 import os, sys
-os.chdir('/Users/semvijverberg/surfdrive/Scripts/Extracting_precursor/')
+os.chdir('/Users/semvijverberg/surfdrive/Scripts/CPPA_vs_PEP/')
 script_dir = os.getcwd()
 sys.path.append(script_dir)
 if sys.version[:1] == '3':
     from importlib import reload as rel
 import func_CPPA
+import load_data
 import func_pred
 import numpy as np
 import pandas as pd
@@ -40,7 +41,7 @@ ex = dic['ex']
 # =============================================================================
 # load data
 # =============================================================================
-RV_ts, Prec_reg, ex = func_CPPA.load_data(ex)
+RV_ts, Prec_reg, ex = load_data.load_data(ex)
 
 print_ex = ['RV_name', 'name', 'load_mcK', 'max_break',
             'min_dur', 'grid_res', 'startyear', 'endyear', 
@@ -183,7 +184,12 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
 # =============================================================================
 #   Plotting
 # =============================================================================
-#    lags = [0,5,15,30,50]
+    ROC_str_mcK      = ['{} days - AUC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
+    ROC_str_Sem      = ['{} days - AUC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
+    lags = ex['lags']
+#    lags = [10] #5,15,30,50]   
+    ROC_str_Sem_ = [ROC_str_Sem[ex['lags'].index(l)] for l in lags]
+    ROC_str_mcK = [ROC_str_mcK[ex['lags'].index(l)] for l in lags]
 #    lags = [15]
 #    score_Sem = [score_Sem[ex['lags'].index(l)] for l in lags]
 #    ex['lags'] = lags
@@ -220,8 +226,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         patterns_Sem[n,:,:,:] = upd_pattern * l_ds_CPPA[n]['std_train_min_lag'].sel(lag=ex['lags'])
         patterns_mcK[n,:,:,:] = l_ds_PEP[n]['pattern'].sel(lag=ex['lags'])
     
-    ROC_str_mcK      = ['{} days - AUC score {}'.format(ex['lags'][i], score_mcK[i]) for i in range(len(ex['lags'])) ]
-    ROC_str_Sem      = ['{} days - AUC score {}'.format(ex['lags'][i], score_Sem[i]) for i in range(len(ex['lags'])) ]
+
     # Sem plot 
     # share kwargs with mcKinnon plot
     
@@ -364,15 +369,12 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         func_CPPA.plotting_wrapper(pers_patt, ex, filename, kwrgs=kwrgs)
     #%% Weighing features if there are extracted every run (training set)
     # weighted by persistence of pattern over
-    lags = ex['lags']
-#    lags = [10] #5,15,30,50]   
-    ROC_str_Sem_ = [ROC_str_Sem[ex['lags'].index(l)] for l in lags]
     
     if ex['leave_n_out']:
         kwrgs = dict( {'title' : '', 'clevels' : 'notdefault', 'steps':17,
                         'vmin' : -0.4, 'vmax' : 0.4, 'subtitles' : ROC_str_Sem_,
                        'cmap' : plt.cm.RdBu_r, 'column' : 1,
-                       'cbar_vert' : 0.07, 'cbar_hght' : 0.01,
+                       'cbar_vert' : 0.07, 'cbar_hght' : -0.03,
                        'adj_fig_h' : 1.5, 'adj_fig_w' : 1., 
                        'hspace' : 0.02, 'wspace' : 0.08,} )
         # weighted by persistence (all years == wgt of 1, less is below 1)

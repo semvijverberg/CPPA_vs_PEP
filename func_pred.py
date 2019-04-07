@@ -52,7 +52,7 @@ def spatial_cov(ex, key1='spatcov_PEP', key2='spatcov_CPPA'):
 #            dates_test += pd.Timedelta(hour, unit='h')
             ### only test data ###
             dates_test_lag = func_dates_min_lag(dates_test, lag)[0]
-
+            dates_test_lag = [d[:10] for d in dates_test_lag]
             
             
             idx = lag_idx
