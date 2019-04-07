@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Created on Mon Dec 10 10:31:42 2018
 
@@ -7,11 +5,12 @@ Created on Mon Dec 10 10:31:42 2018
 """
 
 import os, sys
-os.chdir('/Users/semvijverberg/surfdrive/Scripts/Extracting_precursor/')
+os.chdir('/Users/semvijverberg/surfdrive/Scripts/CPPA_vs_PEP/')
 script_dir = os.getcwd()
 sys.path.append(script_dir)
 if sys.version[:1] == '3':
     from importlib import reload as rel
+
 import numpy as np
 import xarray as xr 
 import pandas as pd
@@ -32,6 +31,9 @@ path_pp  = "/Users/semvijverberg/surfdrive/Data_ERAint/input_pp" # path to netcd
 if os.path.isdir(path_pp) == False: os.makedirs(path_pp)
 
 
+# =============================================================================
+# General Settings
+# =============================================================================
 ex = {'grid_res'    :       2.5,
      'startyear'    :       1979,
      'endyear'      :       2017,
@@ -41,34 +43,42 @@ ex = {'grid_res'    :       2.5,
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
      'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n4__to_t2mmax_tf1.npy",
-     'tfreq'        :       1,
-     'max_break'    :       0,
-     'min_dur'      :       1,
-     'load_mcK'     :       '0',
      'RV_name'      :       'T2mmax',
      'name'         :       'sst',
-     'leave_n_out'  :       True,
-     'ROC_leave_n_out':     False,
-     'method'       :       'iter', #87  
-     'wghts_accross_lags':  False,
-     'mcKthres'     :       'mcKthres',
-     'rollingmean'  :       ('CPPA', 1),
-     'extra_wght_dur':      False,
      'add_lsm'      :       False,
-     'prec_reg_max_d':      1,
-     'perc_map'     :       95,
-     'comp_perc'    :       0.80, 
-     'min_n_gc'     :       5,
      'region'       :       'Northern',
      'regionmcK'    :       'PEPrectangle',
-     
-    }  # 'mcKthres'
+     'lags'         :       [0, 5, 10, 15, 20, 30, 40, 50, 60], #[5, 15, 30, 50] #[10, 20, 30, 50] 
+     'plot_ts'      :       True,
+     }
+# =============================================================================
+# Settings for event timeseries
+# =============================================================================
+ex['tfreq']             =       1
+ex['max_break']         =       0   
+ex['min_dur']           =       1   
+ex['load_mcK']          =       '0'
+ex['mcKthres']          =       'mcKthres'    
+# =============================================================================
+# Settins for precursor / CPPA
+# =============================================================================
+ex['filename_precur']   = '{}_1979-2017_1jan_31dec_daily_{}deg.nc'.format(
+                            ex['name'], ex['grid_res'])
+ex['rollingmean']       =       ('CPPA', 1)
+ex['extra_wght_dur']    =       False
+ex['prec_reg_max_d']    =       1
+ex['perc_map']          =       95
+ex['comp_perc']         =       0.80
+ex['min_n_gc']          =       5
+ex['wghts_accross_lags']=       False
+# =============================================================================
+# Settings for validation     
+# =============================================================================
+ex['leave_n_out']       =       True,
+ex['ROC_leave_n_out']   =       False,
+ex['method']            =       'iter' #87  
 
 
-# [0, 5, 10, 15, 20, 30, 40, 50]
-ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50, 60] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
-ex['plot_ts'] = True
-#ex['n_strongest'] = 15 
 
 if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
     ex['region']     = 'U.S.soil'
@@ -77,12 +87,14 @@ if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
     ex['mask_file'] = 'mask_North_America_for_soil{}deg.nc'.format(ex['grid_red'])
 
 
+
 RV_ts, Prec_reg, ex = load_data.load_data(ex)
 
 ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
                       ex['region'], ex['regionmcK'])
 ex['figpathbase'] = os.path.join(ex['figpathbase'], ex['exppathbase'])
 if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
+
 
 print_ex = ['RV_name', 'name', 'load_mcK', 'max_break',
             'min_dur', 'grid_res', 'startyear', 'endyear', 
@@ -103,6 +115,7 @@ def printset(print_ex=print_ex, ex=ex):
         key_exp = key + ' ' * expand
         printline = '\'{}\'\t\t{}'.format(key_exp, ex[key])
         print(printline)
+
 
 printset()
 n = 1
