@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 #import scipy
 import func_CPPA
 import func_pred
+import load_data
 
 from ROC_score import plotting_timeseries
 xarray_plot = func_CPPA.xarray_plot
@@ -39,7 +40,7 @@ ex = {'grid_res'    :       2.5,
      'endperiod'     :       '08-22', #'1982-08-22',
      'figpathbase'  :       "/Users/semvijverberg/surfdrive/McKinRepl/",
      'RV1d_ts_path' :       "/Users/semvijverberg/surfdrive/MckinRepl/RVts2.5",
-     'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n6__to_t2mmax_tf1.npy",
+     'RVts_filename':       "t2mmax_1979-2017_averAggljacc0.75d_tf1_n4__to_t2mmax_tf1.npy",
      'tfreq'        :       1,
      'max_break'    :       0,
      'min_dur'      :       1,
@@ -49,32 +50,26 @@ ex = {'grid_res'    :       2.5,
      'leave_n_out'  :       True,
      'ROC_leave_n_out':     False,
      'method'       :       'iter', #87  
-     'wghts_std_anom':      True,
      'wghts_accross_lags':  False,
-     'splittrainfeat':      False,
-     'use_ts_logit' :       False,
-     'logit_valid'  :       False,
-     'pval_logit_first':    0.10,
-     'pval_logit_final':    0.05,
      'mcKthres'     :       'mcKthres',
      'rollingmean'  :       ('CPPA', 1),
      'extra_wght_dur':      False,
      'add_lsm'      :       False,
-     'prec_reg_max_d':      1}  # 'mcKthres'
+     'prec_reg_max_d':      1,
+     'perc_map'     :       95,
+     'comp_perc'    :       0.80, 
+     'min_n_gc'     :       5,
+     'region'       :       'Northern',
+     'regionmcK'    :       'PEPrectangle',
+     
+    }  # 'mcKthres'
 
 
-
-ex['plot_ts'] = True
 # [0, 5, 10, 15, 20, 30, 40, 50]
 ex['lags'] = [0, 5, 10, 15, 20, 30, 40, 50, 60] #[5, 15, 30, 50] #[10, 20, 30, 50] # [0, 5, 10, 15, 20, 30, 40, 50] # [60, 70, 80] # [0, 6, 12, 18]  # [24, 30, 40, 50] # [60, 80, 100]
-ex['min_detection'] = 5
-ex['n_strongest'] = 15 
-ex['perc_map'] = 95
-ex['min_n_gc'] = 5
-ex['comp_perc'] = 0.80 
+ex['plot_ts'] = True
+#ex['n_strongest'] = 15 
 
-ex['region'] = 'Northern'
-ex['regionmcK'] = 'PEPrectangle'
 if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
     ex['region']     = 'U.S.soil'
     ex['regionmcK']  = 'U.S.soil'
@@ -82,7 +77,7 @@ if ex['name'][:2] == 'sm' or ex['name'][:2] == 'st':
     ex['mask_file'] = 'mask_North_America_for_soil{}deg.nc'.format(ex['grid_red'])
 
 
-RV_ts, Prec_reg, ex = func_CPPA.load_data(ex)
+RV_ts, Prec_reg, ex = load_data.load_data(ex)
 
 ex['exppathbase'] = '{}_{}_{}_{}'.format(ex['RV_name'],ex['name'],
                       ex['region'], ex['regionmcK'])
@@ -92,12 +87,12 @@ if os.path.isdir(ex['figpathbase']) == False: os.makedirs(ex['figpathbase'])
 print_ex = ['RV_name', 'name', 'load_mcK', 'max_break',
             'min_dur', 'grid_res', 'startyear', 'endyear', 
             'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
-            'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
-            'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
+            'n_oneyr', 'method', 'ROC_leave_n_out',
+            'wghts_accross_lags', 
             'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
-            'pval_logit_first', 'pval_logit_final', 'rollingmean',
+            'rollingmean',
             'mcKthres', 'perc_map', 'comp_perc', 'extra_wght_dur',
-            'logit_valid', 'use_ts_logit', 'region', 'regionmcK',
+            'region', 'regionmcK',
             'add_lsm', 'min_n_gc', 'prec_reg_max_d']
 
 def printset(print_ex=print_ex, ex=ex):
@@ -754,7 +749,7 @@ if ex['leave_n_out']:
 #print_ex = ['RV_name', 'name', 'load_mcK', 'grid_res', 'startyear', 'endyear', 
 #            'startperiod', 'endperiod', 'n_conv', 'leave_n_out',
 #            'n_oneyr', 'method', 'ROC_leave_n_out', 'wghts_std_anom', 
-#            'wghts_accross_lags', 'splittrainfeat', 'n_strongest',
+#            'wghts_accross_lags', 'n_strongest',
 #            'perc_map', 'tfreq', 'lags', 'n_yrs', 'hotdaythres',
 #            'pval_logit_first', 'pval_logit_final', 'rollingmean',
 #            'mcKthres', 'new_model_sel', 'perc_map', 'comp_perc',

@@ -89,7 +89,7 @@ df = pd.DataFrame(index=ex['lags'],
 df.index.name = 'lag'
 df.to_csv(ex['shared_folder']+'/output_summ.csv')
 
-ex['output_ts_folder'] += '_robwghts'
+ex['output_ts_folder'] += ''
 
 #%%
 
@@ -158,7 +158,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
         df.to_csv(os.path.join(predict_folder, filename_csv))
 
 #    # El nino 3.4
-#    ex = func_pred.spatial_cov(RV_ts, ex, 'nino3.4', 'nino3.4rm5')
+#    ex = func_pred.spatial_cov(ex, 'nino3.4', 'nino3.4rm5')
 #    
 #    # =============================================================================
 #    # Calculate AUC score

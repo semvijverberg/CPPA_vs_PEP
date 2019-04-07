@@ -182,12 +182,19 @@ def ROC_score_wrapper(ex):
     ROC_mcK  = np.zeros(len(ex['lags']))
     ROC_boot = np.zeros(len(ex['lags']))
     
-    events_idx = np.where(ex['test_RV'][0] > ex['hotdaythres'])[0]
-    y_true = func_CPPA.Ev_binary(events_idx, len(ex['test_RV'][0]),  ex['min_dur'], 
-                                 ex['max_break'], grouped=False)
-    y_true[y_true!=0] = 1
+
     
     for lag_idx, lag in enumerate(ex['lags']):
+        if lag > 30:
+            obs_array = pd.DataFrame(ex['test_RV'][0])
+            obs_array = obs_array.rolling(7, center=True, min_periods=1).mean()
+            threshold = (obs_array.mean() + obs_array.std()).values
+            events_idx = np.where(obs_array > threshold)[0]
+        else:
+            events_idx = np.where(ex['test_RV'][0] > ex['hotdaythres'])[0]
+        y_true = func_CPPA.Ev_binary(events_idx, len(ex['test_RV'][0]),  ex['min_dur'], 
+                                 ex['max_break'], grouped=False)
+        y_true[y_true!=0] = 1
         if lag_idx == 0:
             print('Calculating ROC scores\nDatapoints precursor length '
               '{}\nDatapoints RV length {}'.format(len(ex['test_ts_mcK'][0]),

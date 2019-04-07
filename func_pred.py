@@ -47,8 +47,13 @@ def spatial_cov(ex, key1='spatcov_PEP', key2='spatcov_CPPA'):
             path = os.path.join(ex['output_ts_folder'], csv_train_test_data)
             data = pd.read_csv(path, index_col='date')
             
+#            # match hour
+#            hour = pd.to_datetime(data.index[0]).hour
+#            dates_test += pd.Timedelta(hour, unit='h')
             ### only test data ###
             dates_test_lag = func_dates_min_lag(dates_test, lag)[0]
+
+            
             
             idx = lag_idx
             if ex['use_ts_logit'] == False:
@@ -530,8 +535,8 @@ def pred_gridcells(RV_ts, filename, ex):
     pred = data['values'].values
     # how to define binary event timeseries:
     min_dur = ex['min_dur'] ; max_break = ex['max_break']  
-    min_dur = 5 ; max_break = 1 
-    grouped = True ; win = 3
+    min_dur = 3 ; max_break = 1
+    grouped = True ; win = 0; rmwin = 7
 
     # load 'observations'
     filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
@@ -541,6 +546,12 @@ def pred_gridcells(RV_ts, filename, ex):
     datesRV = func_CPPA.make_datestr(pd.to_datetime(obs_array.time.values), ex, 
                                         ex['startyear'], ex['endyear'])
     obs_array = obs_array.sel(time=datesRV + pd.Timedelta(int(RVhour), unit='h'))
+    
+    obs_array = obs_array.rolling(time=rmwin, center=True, 
+                                                 min_periods=1).mean(dim='time')
+#    pred = data['values'].rolling(rmwin, center=True, min_periods=1).mean().values
+                                                 
+
     
     def core_pred_gridcells(obs_array, pred, min_dur, max_break):
         lats = obs_array.latitude
@@ -559,9 +570,9 @@ def pred_gridcells(RV_ts, filename, ex):
         max_break = pd.Timedelta(max_break, 'd') / tfreq_RVts
         
         
-        for gc in range(obs_flat.shape[-1])[100:110]:
+        for gc in range(obs_flat.shape[-1]):
             
-            gc_threshold = np.mean(obs_flat[:,gc]) + 1 * np.std(obs_flat[:,gc])
+            gc_threshold = np.mean(obs_flat[:,gc]) + 1. * np.std(obs_flat[:,gc])
             events_idx = np.where(obs_flat[:,gc] > gc_threshold)[0][:]  
 
             y_true = func_CPPA.Ev_binary(events_idx, time.size,  min_dur, 
@@ -574,20 +585,23 @@ def pred_gridcells(RV_ts, filename, ex):
                         y_true[y_true==1].size))
             if y_true[y_true==1].size > 10:
 #                output[gc] = roc_auc_score(y_true, pred)
-                if win == 0:
+                if win == 1:
                     output[gc] = roc_auc_score(y_true, pred)
 #                    print('sklearn {}'.format(roc_auc_score(y_true, pred)))
 #                    output[gc] = ROC_score(pred, y_true, n_boot=0, win=win, n_yrs=39)[0]
 #                    print(output[gc])
-                else:
+                elif win == 0:
                     
-                    output[gc] = ROC_score(pred, y_true, n_boot=0, win=win, n_yrs=39)[0]
-#                    if gc in range(obs_flat.shape[-1])[::100]:
-                    y_true = func_CPPA.Ev_binary(events_idx, time.size,  min_dur, 
-                                         max_break, grouped=grouped)
-                    y_true[y_true!=0] = 1
-                    print('{} sklearn {}'.format(gc, roc_auc_score(y_true, pred)))
-                    print(output[gc])
+                    output[gc] = roc_auc_score(y_true, pred)
+
+                    if gc in range(obs_flat.shape[-1])[::150]:
+                        print('{} sklearn {:.2f}'.format(gc, roc_auc_score(y_true, pred)))
+                        print('own ROC {:.2f}'.format(ROC_score(pred, y_true, n_boot=0, win=win, n_yrs=39)[0]))
+                        y_true = func_CPPA.Ev_binary(events_idx, time.size,  min_dur, 
+                                         max_break, grouped=True)
+                        y_true[y_true!=0] = 1
+                        print('{} grouped sklearn {:.2f}'.format(gc, roc_auc_score(y_true, pred)))
+                        
                     
             else: 
                 output[gc] = 0.0
@@ -595,13 +609,44 @@ def pred_gridcells(RV_ts, filename, ex):
         output = xr.DataArray(output, dims=obs_array[0].dims, coords=obs_array[0].coords)    
         return output
         
-        
+
+    
     output = core_pred_gridcells(obs_array, pred, min_dur, max_break)
     output = output.where(obs_array.mask==True)
     #%%
+    T95 = obs_array.quantile(0.95, dim=('latitude','longitude'))  
+    threshold = T95.mean() + T95.std()
+    events_idx = np.where(T95 > threshold)[0][:]  
+
+    y_true = func_CPPA.Ev_binary(events_idx, T95.time.size,  min_dur, 
+                                 max_break, grouped=grouped)
+    y_true[y_true!=0] = 1
+    roc_auc_score(y_true, pred)
+    ROC, std = ROC_score(pred, y_true, n_boot=0, win=win, n_yrs=39)
+    from sklearn.metrics import average_precision_score
+    AP = average_precision_score(y_true, pred)
+    from sklearn.metrics import precision_recall_curve
+    precision, recall, thresholds = precision_recall_curve(y_true, pred)
+    from sklearn.metrics import roc_curve
+    fpr, tpr, thresholds = roc_curve(y_true, pred)
+    plt.figure()
+    lw = 2
+    plt.plot(fpr, tpr, color='darkorange',
+             lw=lw, label='ROC curve (area = %0.2f)' % ROC)
+    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver operating characteristic')
+    plt.legend(loc="lower right")
+    plt.show()
+#    sign_thres = np.percentile(std, 99)
+    sign_thres = 0.634
+    #%%
     fig, ax = plot_earth(view = "US")
 
-
+    
     clevels = np.arange(0.45, np.round(output.max().values, 1)+1E-9 , 0.05)
     own_c = ['slategrey', 'green', 'cyan', 'blue', 
                   'purple', 'red', 'firebrick', 'maroon']
@@ -618,9 +663,14 @@ def pred_gridcells(RV_ts, filename, ex):
                                 levels=clevels,
                                 cmap=cmap,
                                 add_colorbar=False)
+    output.plot.contourf(ax = ax, 
+                        transform=ccrs.PlateCarree(),
+                        levels=[0,sign_thres, 1.0],
+                        hatches='...', alpha=0.0,
+                        add_colorbar=False)
     ax.set_title('')
     
-    cbar_ax = fig.add_axes([0.25, 0.3, 
+    cbar_ax = fig.add_axes([0.25, 0.28, 
                                   0.5, 0.03], label='cbar')    
     norm = colors.BoundaryNorm(boundaries=clevels, ncolors=256)
     cbar = plt.colorbar(im, cbar_ax, cmap=cmap, orientation='horizontal', 
@@ -634,8 +684,8 @@ def pred_gridcells(RV_ts, filename, ex):
     folder = ''
     for s in filename_pred.split('/')[:-1]:
         folder  = folder + s + '/'
-    name = filename_pred.split('/')[-1][:-3] + 'dur{}_pause{}_gr{}_win.png'.format(
-            min_dur, max_break, grouped, win)
+    name = filename_pred.split('/')[-1][:-3] + 'dur{}_pause{}_gr{}_rmwin{}.png'.format(
+            min_dur, max_break, grouped, rmwin)
     filename = os.path.join(folder, name)
     plt.savefig(filename, dpi=600)
     

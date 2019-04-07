@@ -24,105 +24,6 @@ import scipy
 flatten = lambda l: [item for sublist in l for item in sublist]
 
 
-def load_data(ex):
-    #'Mckinnonplot', 'U.S.', 'U.S.cluster', 'PEPrectangle', 'Pacific', 'Whole', 'Northern', 'Southern'
-    def oneyr(datetime):
-        return datetime.where(datetime.year==datetime.year[0]).dropna()
-    
-    if ex['load_mcK'][0] == '1':
-        # Load in mckinnon Time series
-        ex['RVname'] = 'T95' + ex['load_mcK'][1:]
-        ex['name']   = 'sst_NOAA'
-        ex['startyear'] = 1982 ; 
-        if ex['load_mcK'][1:] == 'bram':
-            T95name = 'T95_Bram_McK.csv' ; lpyr=True
-        else:
-            T95name = 'PEP-T95TimeSeries.txt'; lpyr=False
-        RVtsfull, datesmcK = read_T95(T95name, ex) 
-        ex['endyear'] = int(RVtsfull[-1].time.dt.year)
-        datesRV = make_datestr(datesmcK, ex,
-                                        ex['startyear'], ex['endyear'], lpyr=lpyr)
-        filename_precur = ('{}_1982-2017_2jan_31aug_dt-1days_{}deg'
-                        '.nc'.format(ex['name'], ex['grid_res']))
-    else:
-        # load ERA-i Time series
-        print('\nimportRV_1dts is true, so the 1D time serie given with name \n'
-                  '{} is imported.'.format(ex['RVts_filename']))
-        filename = os.path.join(ex['RV1d_ts_path'], ex['RVts_filename'])
-        dicRV = np.load(filename,  encoding='latin1').item()
-        RVtsfull = dicRV['RVfullts95']
-        ex['mask'] = dicRV['RV_array']['mask']
-        xarray_plot(dicRV['RV_array']['mask'])
-        RVhour   = RVtsfull.time[0].dt.hour.values
-        datesRV = make_datestr(pd.to_datetime(RVtsfull.time.values), ex, 
-                                        ex['startyear'], ex['endyear'])
-        # add RVhour to daily dates
-        datesRV = datesRV + pd.Timedelta(int(RVhour), unit='h')
-        filename_precur = '{}_{}-{}_2jan_31okt_dt-1days_{}deg.nc'.format(ex['name'],
-                           ex['startyear'], ex['endyear'], ex['grid_res'])
-        filename_precur = '{}_1979-2017_1jan_31dec_daily_{}deg.nc'.format(ex['name'],
-                           ex['grid_res'])
-        ex['endyear'] = int(datesRV[-1].year)
-    
-    # Selected Time series of T95 ex['sstartdate'] until ex['senddate']
-    RVts = RVtsfull.sel(time=datesRV)
-    ex['n_oneyr'] = oneyr(datesRV).size
-    
-    RV_ts, datesmcK = time_mean_bins(RVts, ex)
-    #expanded_time = func_mcK.expand_times_for_lags(datesmcK, ex)
-    
-    if ex['mcKthres'] == 'mcKthres':
-        # binary time serie when T95 exceeds 1 std
-        ex['hotdaythres'] = RV_ts.mean(dim='time').values + RV_ts.std().values
-    else:
-        percentile = ex['mcKthres']
-        ex['hotdaythres'] = np.percentile(RV_ts.values, percentile)
-        ex['mcKthres'] = '{}'.format(percentile)
-    
-    # Load in external ncdf
-    filename = '{}_1979-2017_1mar_31dec_dt-1days_{}deg.nc'.format(ex['name'],
-                ex['grid_res'])
-    #filename_precur = 'sm2_1979-2017_2jan_31okt_dt-1days_{}deg.nc'.format(ex['grid_res'])
-    #path = os.path.join(ex['path_raw'], 'tmpfiles')
-    # full globe - full time series
-    varfullgl = import_array(filename_precur, ex, path='pp')
-    
-    
-    # Converting Mckinnon timestemp to match xarray timestemp
-    #expandeddaysmcK = func_mcK.to_datesmcK(expanded_time, expanded_time[0].hour, varfullgl.time[0].dt.hour)
-    # region mckinnon - expanded time series
-    #Prec_reg = func_mcK.find_region(varfullgl.sel(time=expandeddaysmcK), region=ex['region'])[0]
-    Prec_reg = find_region(varfullgl, region=ex['region'])[0]
-    
-    if ex['tfreq'] != 1:
-        Prec_reg, datesvar = time_mean_bins(Prec_reg, ex)
-
-    
-    Prec_reg = Prec_reg.to_array().squeeze()
-
-    
-    ## filter out outliers 
-    if ex['name'][:2]=='sm':
-        Prec_reg = Prec_reg.where(Prec_reg.values < 5.*Prec_reg.std(dim='time').values)
-    
-    if ex['add_lsm'] == True:
-        base_path_lsm = '/Users/semvijverberg/surfdrive/Scripts/rasterio/'
-        mask = import_array(ex['mask_file'].format(ex['grid_res']), ex,
-                                     base_path_lsm)
-        mask_reg = find_region(mask, region=ex['region'])[0]
-        mask_reg = mask_reg.to_array().squeeze()
-        mask = (('latitude', 'longitude'), mask_reg.values)
-        Prec_reg.coords['mask'] = mask
-        Prec_reg.values = Prec_reg * mask_reg
-        
-
-
-    ex['n_yrs'] = len(set(RV_ts.time.dt.year.values))
-    ex['n_conv'] = ex['n_yrs'] 
-    return RV_ts, Prec_reg, ex
-
-
-
 
 def main(RV_ts, Prec_reg, ex):
     #%%
@@ -481,12 +382,12 @@ def extract_regs_p1(events_min_lag, wghts_dur, ts_3d, std_train_lag, ex):
     # Regions are iteratively counted starting from first lag (R0) to last lag R(-1)
     # adapt numbering of different communities/Regions to account for 
     # multiple variables/lags
-    if Regions_lag_i.max()> 0:
-        n_regions_lag_i = int(Regions_lag_i.max()) 	
+#    if Regions_lag_i.max()> 0:
+#        n_regions_lag_i = int(Regions_lag_i.max()) 	
 
-    # if there are less regions that are desired, the n_strongest is lowered
-    if n_regions_lag_i <= ex['n_strongest']:
-        ex['upd_n_strongest'] = n_regions_lag_i
+#    # if there are less regions that are desired, the n_strongest is lowered
+#    if n_regions_lag_i <= ex['n_strongest']:
+#        ex['upd_n_strongest'] = n_regions_lag_i
                
     
     # reshape to latlon grid
@@ -654,9 +555,9 @@ def store_timeseries(ds_mcK, ds_Sem, RV_ts, Prec_reg, ex):
                
         data = np.concatenate([nino_index[:,None], spatcov_PEP[:,None], 
                                spatcov_CPPA.values[:,None], ts_regions_lag_i], axis=1)
-                            
-
-        df = pd.DataFrame(data = data, index=pd.to_datetime(ts_3d_w.time.values), columns=columns) 
+        dates = pd.to_datetime(ts_3d_w.time.values)
+        dates -= pd.Timedelta(dates.hour[0], unit='h')
+        df = pd.DataFrame(data = data, index=dates, columns=columns) 
         df['nino3.4rm5'] = df['nino3.4'].rolling(int((365/12)*5), min_periods=1).mean()
         columns.insert(1, 'nino3.4rm5')
         df = df.reindex(columns, axis=1)
