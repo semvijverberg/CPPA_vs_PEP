@@ -80,8 +80,7 @@ dic_exp = ({
             })
     
 ex['shared_folder'] = ('/Users/semvijverberg/Dropbox/VIDI_Coumou/Paper1_Sem/'
-                 'output_summ/iter_1979_2017_tf1_mcKthresp_2.5deg_60nyr'
-                 '_95tperc_0.8tc_1rm_2019-02-26/lags[0,5,10,15,20,30,40,50,60]Ev1d0p_pmd1')
+                 'output_summ/'+ex['CPPA_folder'])
 
 df = pd.DataFrame(index=ex['lags'], 
                   columns=['nino3.4', 'nino3.4rm5', 'PEP', 'CPPA_spatcov', 
@@ -376,7 +375,7 @@ def all_output_wrapper(dic, exp_key='CPPA_spatcov'):
                        'cmap' : plt.cm.RdBu_r, 'column' : 1,
                        'cbar_vert' : 0.07, 'cbar_hght' : -0.03,
                        'adj_fig_h' : 1.5, 'adj_fig_w' : 1., 
-                       'hspace' : 0.02, 'wspace' : 0.08,} )
+                       'hspace' : 0.02, 'wspace' : 0.08} )
         # weighted by persistence (all years == wgt of 1, less is below 1)
         mean_n_patterns = patterns_Sem.mean(dim='n_tests') * wghts/np.max(wghts)
         mean_n_patterns = mean_n_patterns.sel(lag=lags)

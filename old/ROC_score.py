@@ -95,46 +95,6 @@ def ROC_score_wrapper_old(test, train, ds_mcK, ds_Sem, ex):
                 '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
                   lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
             
-                
-#        elif ex['leave_n_out'] == True and ex['method'] == 'random':        
-#                               
-#            # check detection of precursor:
-#            Prec_threshold_mcK = ds_mcK['perc'].sel(percentile=60 /10).values[0]
-#            Prec_threshold_Sem = ds_Sem['perc'].sel(percentile=60 /10).values[0]
-#            
-#            # check if there are any detections
-#            Prec_det_mcK = (func_CPPA.Ev_timeseries(crosscorr_mcK, 
-#                                           Prec_threshold_mcK).size > ex['min_detection'])
-#            Prec_det_Sem = (func_CPPA.Ev_timeseries(crosscorr_Sem, 
-#                                           Prec_threshold_Sem).size > ex['min_detection'])
-#            
-#    #        # plot the detections
-#            func_CPPA.plot_events_validation(crosscorr_Sem, crosscorr_mcK, test['RV'], Prec_threshold_Sem, 
-#                                            Prec_threshold_mcK, ex['hotdaythres'], 2000)
-#    
-#            if Prec_det_mcK == True:
-#                n_boot = 1
-#                ROC_mcK[idx], ROC_boot = ROC_score(crosscorr_mcK, test['RV'],
-#                                      ex['hotdaythres'], lag, n_boot, ex, ds_mcK['perc'])
-#            else:
-#                print('Not enough predictions detected, neglecting this predictions')
-#                ROC_mcK[idx] = ROC_boot = 0.5
-#    
-#    
-#            
-#            if Prec_det_Sem == True:
-#                n_boot = 0
-#                ROC_Sem[idx] = ROC_score(crosscorr_Sem, test['RV'],
-#                                      ex['hotdaythres'], lag, n_boot, ex, ds_Sem['perc'])[0]
-#            else:
-#                print('Not enough predictions detected, neglecting this predictions')
-#                ROC_Sem = ROC_boot = 0.5
-#                                  
-#            
-#            print('\n*** ROC score for {} lag {} ***\n\nMck {:.2f} \t Sem {:.2f} '
-#                '\t ±{:.2f} 2*std random events\n\n'.format(ex['region'], 
-#                  lag, ROC_mcK[idx], ROC_Sem[idx], 2*np.std(ROC_boot)))
-            
         elif ex['leave_n_out'] == False or ex['method'][:5] == 'split':
             if idx == 0:
                 print('performing hindcast')
